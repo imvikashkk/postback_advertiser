@@ -8,7 +8,7 @@ export function proxy(req: NextRequest) {
 
   if (pathname.startsWith('/admin')) {
     if (pathname.startsWith('/admin_auth')) {
-      if (adminToken) return NextResponse.redirect(new URL('/admin', req.url));
+      if (adminToken) return NextResponse.redirect(new URL('/admin/postbacks', req.url));
       return NextResponse.next();
     }
     if (!adminToken) return NextResponse.redirect(new URL('/admin_auth', req.url));

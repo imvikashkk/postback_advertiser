@@ -1,19 +1,19 @@
 -- Run this once to set up the DB schema, on its own dedicated "postbackadvertise" database.
 
--- ── Migration: rename "advertiser" → "publisher" (must run first, before the
+-- ── Migration: rename "publisher" → "advertiser" (must run first, before the
 -- CREATE TABLE/INDEX statements below that assume the new names already exist;
 -- safe no-op on a brand-new database) ──
 DO $$
 BEGIN
-  IF EXISTS (SELECT 1 FROM information_schema.tables WHERE table_name = 'adv_advertisers')
-     AND NOT EXISTS (SELECT 1 FROM information_schema.tables WHERE table_name = 'adv_publishers') THEN
-    ALTER TABLE adv_advertisers RENAME TO adv_publishers;
+  IF EXISTS (SELECT 1 FROM information_schema.tables WHERE table_name = 'adv_publishers')
+     AND NOT EXISTS (SELECT 1 FROM information_schema.tables WHERE table_name = 'adv_advertisers') THEN
+    ALTER TABLE adv_publishers RENAME TO adv_advertisers;
   END IF;
-  IF EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name = 'adv_clicks' AND column_name = 'advertiser_id') THEN
-    ALTER TABLE adv_clicks RENAME COLUMN advertiser_id TO publisher_id;
+  IF EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name = 'adv_clicks' AND column_name = 'publisher_id') THEN
+    ALTER TABLE adv_clicks RENAME COLUMN publisher_id TO advertiser_id;
   END IF;
-  IF EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name = 'adv_conversions' AND column_name = 'advertiser_id') THEN
-    ALTER TABLE adv_conversions RENAME COLUMN advertiser_id TO publisher_id;
+  IF EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name = 'adv_conversions' AND column_name = 'publisher_id') THEN
+    ALTER TABLE adv_conversions RENAME COLUMN publisher_id TO advertiser_id;
   END IF;
 END $$;
 
@@ -31,7 +31,7 @@ END $$;
 -- An external website/offer we drive traffic to. Their landing_url_template
 -- carries THEIR macros (whatever their platform uses, e.g. {pixel}, {pubid}) —
 -- we substitute our own click_id and pubid into it before redirecting.
-CREATE TABLE IF NOT EXISTS adv_publishers (
+CREATE TABLE IF NOT EXISTS adv_advertisers (
   id                  SERIAL PRIMARY KEY,
   name                VARCHAR(150) NOT NULL,
   slug                VARCHAR(60)  NOT NULL UNIQUE,       -- used in our /go/{slug} link
@@ -44,10 +44,10 @@ CREATE TABLE IF NOT EXISTS adv_publishers (
   created_at          TIMESTAMPTZ  NOT NULL DEFAULT NOW(),
   updated_at          TIMESTAMPTZ  NOT NULL DEFAULT NOW()
 );
-CREATE INDEX IF NOT EXISTS idx_adv_publishers_slug ON adv_publishers(slug);
+CREATE INDEX IF NOT EXISTS idx_adv_advertisers_slug ON adv_advertisers(slug);
 
 -- A media buyer of ours who runs ads pointing at our /go/ links. They log into
--- their own portal, pick a publisher, and get a tracking link tagged with their id.
+-- their own portal, pick an advertiser, and get a tracking link tagged with their id.
 CREATE TABLE IF NOT EXISTS adv_media_buyers (
   id            SERIAL PRIMARY KEY,
   name          VARCHAR(150) NOT NULL,
@@ -74,11 +74,11 @@ CREATE TABLE IF NOT EXISTS adv_pixels (
 );
 CREATE INDEX IF NOT EXISTS idx_adv_pixels_mb ON adv_pixels(media_buyer_id);
 
--- One row per click we send out to a publisher's landing page.
+-- One row per click we send out to an advertiser's landing page.
 CREATE TABLE IF NOT EXISTS adv_clicks (
   id             SERIAL PRIMARY KEY,
   click_id       VARCHAR(40)  NOT NULL UNIQUE,   -- random token embedded as {click_id} in the outbound link
-  publisher_id   INTEGER      NOT NULL REFERENCES adv_publishers(id),
+  advertiser_id  INTEGER      NOT NULL REFERENCES adv_advertisers(id),
   media_buyer_id INTEGER      REFERENCES adv_media_buyers(id),  -- who sent this click, if tagged via ?mb=
   pixel_id       INTEGER      REFERENCES adv_pixels(id),        -- which of their pixels, if tagged via ?px=
   meta           JSONB,                          -- passthrough params: utm_*, fbclid, gclid, etc.
@@ -90,13 +90,13 @@ CREATE TABLE IF NOT EXISTS adv_clicks (
 -- indexes below, which assume the columns are there:
 ALTER TABLE adv_clicks ADD COLUMN IF NOT EXISTS media_buyer_id INTEGER REFERENCES adv_media_buyers(id);
 ALTER TABLE adv_clicks ADD COLUMN IF NOT EXISTS pixel_id       INTEGER REFERENCES adv_pixels(id);
-CREATE INDEX IF NOT EXISTS idx_adv_clicks_publisher ON adv_clicks(publisher_id);
+CREATE INDEX IF NOT EXISTS idx_adv_clicks_advertiser ON adv_clicks(advertiser_id);
 CREATE INDEX IF NOT EXISTS idx_adv_clicks_mb ON adv_clicks(media_buyer_id);
 
--- One row per server-to-server postback the publisher fires back at us.
+-- One row per server-to-server postback the advertiser fires back at us.
 CREATE TABLE IF NOT EXISTS adv_conversions (
   id            SERIAL PRIMARY KEY,
-  publisher_id  INTEGER      NOT NULL REFERENCES adv_publishers(id),
+  advertiser_id INTEGER      NOT NULL REFERENCES adv_advertisers(id),
   click_id      VARCHAR(40),                    -- echoed back click_id; NULL if unmatched/unknown
   event         VARCHAR(30)  NOT NULL DEFAULT 'conversion',
   payout        NUMERIC(10,2),
@@ -107,7 +107,7 @@ CREATE TABLE IF NOT EXISTS adv_conversions (
   capi_error    TEXT,
   created_at    TIMESTAMPTZ  NOT NULL DEFAULT NOW()
 );
-CREATE INDEX IF NOT EXISTS idx_adv_conversions_publisher ON adv_conversions(publisher_id);
+CREATE INDEX IF NOT EXISTS idx_adv_conversions_advertiser ON adv_conversions(advertiser_id);
 CREATE INDEX IF NOT EXISTS idx_adv_conversions_click ON adv_conversions(click_id);
 -- In case adv_conversions already existed from an earlier run, before CAPI forwarding existed:
 ALTER TABLE adv_conversions ADD COLUMN IF NOT EXISTS capi_sent  BOOLEAN NOT NULL DEFAULT false;

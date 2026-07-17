@@ -1,5 +1,5 @@
 // Sends a server-to-server Conversions API event to Meta, so ads pointed at
-// external publisher offers still get credited even though the actual sale
+// external advertiser offers still get credited even though the actual sale
 // happens on a site we don't control (and can't fire a browser pixel from).
 
 // Fallback for when the /go bridge page's pixel never fired (blocked, slow

@@ -2,7 +2,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import pool from '@/lib/db';
 
 // Fired from the /go/ bridge page once the Meta pixel has set its cookies,
-// so we have real _fbp/_fbc to match on when the publisher's postback arrives later.
+// so we have real _fbp/_fbc to match on when the advertiser's postback arrives later.
 export async function POST(req: NextRequest, { params }: { params: Promise<{ click_id: string }> }) {
   try {
     const { click_id } = await params;

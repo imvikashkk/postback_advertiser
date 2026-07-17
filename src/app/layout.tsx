@@ -14,7 +14,7 @@ const geistMono = Geist_Mono({
 
 export const metadata: Metadata = {
   title: "Postback Advertise",
-  description: "Click tracking + server-to-server postback receiver for external publishers",
+  description: "Click tracking + server-to-server postback receiver for external advertisers",
 };
 
 export default function RootLayout({

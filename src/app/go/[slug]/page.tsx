@@ -26,12 +26,12 @@ export default async function GoPage({
   const h = await headers();
 
   const pubRes = await pool.query(
-    `SELECT id, landing_url_template, pubid, is_active FROM adv_publishers WHERE slug = $1`,
+    `SELECT id, landing_url_template, pubid, is_active FROM adv_advertisers WHERE slug = $1`,
     [slug],
   );
-  const publisher = pubRes.rows[0];
+  const advertiser = pubRes.rows[0];
 
-  if (!publisher || !publisher.is_active) {
+  if (!advertiser || !advertiser.is_active) {
     notFound();
   }
 
@@ -67,14 +67,14 @@ export default async function GoPage({
   }
 
   await pool.query(
-    `INSERT INTO adv_clicks (click_id, publisher_id, media_buyer_id, pixel_id, meta, ip, user_agent)
+    `INSERT INTO adv_clicks (click_id, advertiser_id, media_buyer_id, pixel_id, meta, ip, user_agent)
      VALUES ($1, $2, $3, $4, $5, $6, $7)`,
-    [clickId, publisher.id, mediaBuyerId, pixelRowId, JSON.stringify(meta), ip, h.get('user-agent') || null],
+    [clickId, advertiser.id, mediaBuyerId, pixelRowId, JSON.stringify(meta), ip, h.get('user-agent') || null],
   );
 
-  const destination = publisher.landing_url_template
+  const destination = advertiser.landing_url_template
     .replaceAll('{click_id}', encodeURIComponent(clickId))
-    .replaceAll('{pubid}', encodeURIComponent(publisher.pubid || ''))
+    .replaceAll('{pubid}', encodeURIComponent(advertiser.pubid || ''))
     .replaceAll('{ip}', encodeURIComponent(ip));
 
   return <GoRedirectClient pixelId={fbPixelId} destination={destination} clickId={clickId} />;

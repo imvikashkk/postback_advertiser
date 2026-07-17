@@ -6,6 +6,8 @@ const BLUE    = '#2563EB';
 const BLUE_LT = '#EFF6FF';
 const BLUE_MD = '#DBEAFE';
 
+const todayStr = new Date().toLocaleDateString('en-CA', { timeZone: 'Asia/Kolkata' });
+
 async function mbLogout() {
   await fetch('/api/mediabuyer/logout', { method: 'POST' });
   window.location.href = '/mediabuyer/login';
@@ -14,14 +16,14 @@ async function mbLogout() {
 type MBTab = 'overview' | 'conversions';
 
 interface Profile { id: number; name: string; email: string | null }
-interface Pixel { id: number; label: string; pixel_id: string; ad_account_id: string | null; is_default: boolean }
-interface Publisher { id: number; name: string; slug: string }
+interface Pixel { id: number; label: string; pixel_id: string; ad_account_id: string | null }
+interface Advertiser { id: number; name: string; slug: string }
 interface Stats { total_clicks: string; total_conversions: string; total_payout: string }
 
-interface PublisherBreakdown { id: number; name: string; slug: string; clicks: string; conversions: string; payout: string }
+interface AdvertiserBreakdown { id: number; name: string; slug: string; clicks: string; conversions: string; payout: string }
 interface ConversionRow {
   id: number; click_id: string | null; event: string; payout: string | null; status: string; created_at: string;
-  publisher_name: string; publisher_slug: string;
+  advertiser_name: string; advertiser_slug: string;
 }
 
 function formatDate(iso: string) {
@@ -59,7 +61,7 @@ function CopyBox({ value }: { value: string }) {
   );
 }
 
-const EMPTY_PIXEL = { label: '', pixel_id: '', access_token: '', ad_account_id: '', is_default: false };
+const EMPTY_PIXEL = { label: '', pixel_id: '', access_token: '', ad_account_id: '' };
 type PixelForm = typeof EMPTY_PIXEL;
 
 function PixelFormCard({
@@ -68,7 +70,7 @@ function PixelFormCard({
   initial?: PixelForm; isEdit?: boolean; onSave: (f: PixelForm) => void; onCancel: () => void; saving: boolean;
 }) {
   const [form, setForm] = useState(initial);
-  const set = (k: keyof PixelForm, v: string | boolean) => setForm((f) => ({ ...f, [k]: v }));
+  const set = (k: keyof PixelForm, v: string) => setForm((f) => ({ ...f, [k]: v }));
   const canSave = form.label.trim() && form.pixel_id.trim() && form.access_token.trim();
 
   return (
@@ -92,10 +94,6 @@ function PixelFormCard({
         <label className={labelCls}>Ad Account ID <span className="text-slate-300 font-normal normal-case">(optional)</span></label>
         <input value={form.ad_account_id} onChange={(e) => set('ad_account_id', e.target.value)} placeholder="act_123456789" className={inputCls} style={inputStyle} />
       </div>
-      <label className="flex items-center gap-2 mb-4 cursor-pointer select-none">
-        <input type="checkbox" checked={form.is_default} onChange={(e) => set('is_default', e.target.checked)} className="w-3.5 h-3.5" />
-        <span className="text-[12px] font-semibold text-slate-600">Default pixel (used for CAPI when a conversion comes in)</span>
-      </label>
       <div className="flex items-center gap-2">
         <button onClick={() => onSave(form)} disabled={saving || !canSave}
           className="px-4 py-2 rounded-[8px] text-[12px] font-bold text-white transition-all disabled:opacity-40" style={{ background: BLUE }}>
@@ -110,40 +108,94 @@ function PixelFormCard({
   );
 }
 
+/* ── Date Filter Bar ─────────────────────────────────────── */
+function DateFilterBar({
+  fromDate, toDate, allTime, onFromChange, onToChange, onAllTimeToggle,
+}: {
+  fromDate: string; toDate: string; allTime: boolean;
+  onFromChange: (v: string) => void; onToChange: (v: string) => void; onAllTimeToggle: () => void;
+}) {
+  return (
+    <div className="flex items-center gap-2 flex-wrap mb-5">
+      <button onClick={onAllTimeToggle}
+        className="px-3 py-1.5 rounded-[8px] text-[11px] font-bold transition-all"
+        style={{
+          background: allTime ? '#EDE9FE' : '#F1F5F9',
+          border: `1.5px solid ${allTime ? '#8B5CF6' : '#E2E8F0'}`,
+          color: allTime ? '#6D28D9' : '#64748B',
+        }}>
+        All time
+      </button>
+
+      {(['from', 'to'] as const).map((side) => (
+        <div key={side} className="relative flex items-center" style={{ opacity: allTime ? 0.4 : 1, transition: 'opacity .2s' }}>
+          <svg className="absolute left-2.5 pointer-events-none" width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="#94A3B8" strokeWidth={2} strokeLinecap="round">
+            <rect x="3" y="4" width="18" height="18" rx="2" /><path d="M16 2v4M8 2v4M3 10h18" />
+          </svg>
+          <input type="date"
+            value={side === 'from' ? fromDate : toDate}
+            max={side === 'from' ? toDate : undefined}
+            min={side === 'to' ? fromDate : undefined}
+            disabled={allTime}
+            onChange={(e) => side === 'from' ? onFromChange(e.target.value) : onToChange(e.target.value)}
+            className="pl-8 pr-3 py-1.5 rounded-[8px] text-[11px] font-semibold text-slate-600 outline-none focus:ring-2 focus:ring-blue-200"
+            style={{ background: '#F8FAFC', border: '1.5px solid #E2E8F0', cursor: allTime ? 'not-allowed' : 'pointer' }}
+          />
+          {side === 'from' && <span className="mx-1.5 text-[11px] font-semibold text-slate-400">to</span>}
+        </div>
+      ))}
+    </div>
+  );
+}
+
 /* ── Conversions Tab ─────────────────────────────────────── */
 function ConversionsTab() {
-  const [byPublisher, setByPublisher] = useState<PublisherBreakdown[]>([]);
+  const [fromDate, setFromDate] = useState(todayStr);
+  const [toDate, setToDate]     = useState(todayStr);
+  const [allTime, setAllTime]   = useState(true);
+  const [byAdvertiser, setByAdvertiser] = useState<AdvertiserBreakdown[]>([]);
   const [rows, setRows] = useState<ConversionRow[]>([]);
   const [loading, setLoading] = useState(true);
   const [page, setPage] = useState(1);
   const [total, setTotal] = useState(0);
   const [totalPages, setTotalPages] = useState(1);
 
-  const fetchData = useCallback(async (pg: number) => {
+  const fetchData = useCallback(async (pg: number, from: string, to: string) => {
     setLoading(true);
-    const res = await fetch(`/api/mediabuyer/conversions?page=${pg}`);
+    const params = new URLSearchParams({ page: String(pg) });
+    if (from) params.set('from', from);
+    if (to)   params.set('to', to);
+    const res = await fetch(`/api/mediabuyer/conversions?${params}`);
     if (res.status === 401) { window.location.href = '/mediabuyer/login'; return; }
     const json = await res.json();
     if (json.success) {
-      setByPublisher(json.by_publisher); setRows(json.data);
+      setByAdvertiser(json.by_advertiser); setRows(json.data);
       setTotal(json.total); setTotalPages(json.totalPages);
     }
     setLoading(false);
   }, []);
 
-  useEffect(() => { fetchData(page); }, [page, fetchData]);
+  useEffect(() => {
+    fetchData(page, allTime ? '' : fromDate, allTime ? '' : toDate);
+  }, [page, fromDate, toDate, allTime, fetchData]);
 
   return (
     <div>
+      <DateFilterBar
+        fromDate={fromDate} toDate={toDate} allTime={allTime}
+        onFromChange={(v) => { setFromDate(v); setPage(1); }}
+        onToChange={(v) => { setToDate(v); setPage(1); }}
+        onAllTimeToggle={() => { setAllTime((p) => !p); setPage(1); }}
+      />
       <div className="rounded-[14px] overflow-hidden mb-6" style={card}>
         <div className="px-4 py-3" style={{ borderBottom: '1px solid #F1F5F9', background: '#F8FAFC' }}>
-          <p className="text-[11px] font-bold uppercase tracking-[.15em] text-slate-400">By Publisher</p>
+          <p className="text-[11px] font-bold uppercase tracking-[.15em] text-slate-400">By Advertiser</p>
         </div>
         <div className="overflow-x-auto">
           <table className="w-full text-left">
             <thead>
               <tr style={{ borderBottom: '1px solid #F1F5F9', background: '#FAFAFA' }}>
-                {['Publisher', 'Clicks', 'Conversions', 'CVR', 'Payout'].map((h) => (
+                {['Advertiser', 'Clicks', 'Conversions', 'CVR', 'Payout'].map((h) => (
                   <th key={h} className="px-4 py-2.5 text-[9px] font-bold uppercase tracking-[.16em] text-slate-400">{h}</th>
                 ))}
               </tr>
@@ -157,10 +209,10 @@ function ConversionsTab() {
                     ))}
                   </tr>
                 ))
-              ) : byPublisher.length === 0 ? (
-                <tr><td colSpan={5} className="px-4 py-6 text-center text-[12px] text-slate-400">No clicks yet on any publisher.</td></tr>
+              ) : byAdvertiser.length === 0 ? (
+                <tr><td colSpan={5} className="px-4 py-6 text-center text-[12px] text-slate-400">No clicks yet on any advertiser.</td></tr>
               ) : (
-                byPublisher.map((row) => (
+                byAdvertiser.map((row) => (
                   <tr key={row.id} className="hover:bg-blue-50 transition-colors" style={{ borderBottom: '1px solid #F8FAFC' }}>
                     <td className="px-4 py-3">
                       <span className="text-[12px] font-bold text-slate-800 block">{row.name}</span>
@@ -189,7 +241,7 @@ function ConversionsTab() {
           <table className="w-full text-left min-w-[600px]">
             <thead>
               <tr style={{ borderBottom: '1px solid #F1F5F9', background: '#FAFAFA' }}>
-                {['Publisher', 'Event', 'Payout', 'Status', 'Date & Time'].map((h) => (
+                {['Advertiser', 'Event', 'Payout', 'Status', 'Date & Time'].map((h) => (
                   <th key={h} className="px-4 py-2.5 text-[9px] font-bold uppercase tracking-[.16em] text-slate-400">{h}</th>
                 ))}
               </tr>
@@ -209,8 +261,8 @@ function ConversionsTab() {
                 rows.map((row) => (
                   <tr key={row.id} style={{ borderBottom: '1px solid #F8FAFC' }}>
                     <td className="px-4 py-3">
-                      <span className="text-[12px] font-bold text-slate-800 block">{row.publisher_name}</span>
-                      <span className="text-[10px] text-slate-400 font-mono">{row.publisher_slug}</span>
+                      <span className="text-[12px] font-bold text-slate-800 block">{row.advertiser_name}</span>
+                      <span className="text-[10px] text-slate-400 font-mono">{row.advertiser_slug}</span>
                     </td>
                     <td className="px-4 py-3 text-[11px] text-slate-600">{row.event}</td>
                     <td className="px-4 py-3 text-[12px] font-bold text-amber-700">{row.payout ? `₹${Number(row.payout).toLocaleString('en-IN')}` : '—'}</td>
@@ -242,10 +294,11 @@ function ConversionsTab() {
 export default function MBDashboard() {
   const [profile, setProfile] = useState<Profile | null>(null);
   const [stats, setStats] = useState<Stats | null>(null);
-  const [publishers, setPublishers] = useState<Publisher[]>([]);
+  const [advertisers, setAdvertisers] = useState<Advertiser[]>([]);
   const [pixels, setPixels] = useState<Pixel[]>([]);
   const [loading, setLoading] = useState(true);
   const [selectedAdv, setSelectedAdv] = useState<string>('');
+  const [selectedPixel, setSelectedPixel] = useState<string>('');
   const [showPixelForm, setShowPixelForm] = useState(false);
   const [editPixel, setEditPixel] = useState<Pixel | null>(null);
   const [savingPixel, setSavingPixel] = useState(false);
@@ -263,9 +316,10 @@ export default function MBDashboard() {
     if (json.success) {
       setProfile(json.profile);
       setStats(json.stats);
-      setPublishers(json.publishers);
+      setAdvertisers(json.advertisers);
       setPixels(json.pixels);
-      if (json.publishers.length > 0) setSelectedAdv((s) => s || json.publishers[0].slug);
+      if (json.advertisers.length > 0) setSelectedAdv((s) => s || json.advertisers[0].slug);
+      if (json.pixels.length > 0) setSelectedPixel((s) => s || String(json.pixels[0].id));
     }
     setLoading(false);
   }, []);
@@ -354,17 +408,31 @@ export default function MBDashboard() {
 
             <div className="rounded-[14px] p-5 mb-6" style={card}>
               <p className="text-[13px] font-bold text-slate-800 mb-1">Your tracking link</p>
-              <p className="text-[11px] text-slate-400 mb-3">Pick an publisher and use this link in your ads. Clicks and conversions will be tagged to you.</p>
-              {publishers.length === 0 ? (
-                <p className="text-[12px] text-slate-400">No active publishers yet — ask admin to add one.</p>
+              <p className="text-[11px] text-slate-400 mb-3">Pick a advertiser and which pixel this campaign belongs to — the link only appears once both are chosen, since each pixel needs its own link.</p>
+              {advertisers.length === 0 ? (
+                <p className="text-[12px] text-slate-400">No active advertisers yet — ask admin to add one.</p>
+              ) : pixels.length === 0 ? (
+                <p className="text-[12px] text-slate-400">Add a pixel below first — every tracking link needs one so conversions can be reported back to it.</p>
               ) : (
                 <>
-                  <select value={selectedAdv} onChange={(e) => setSelectedAdv(e.target.value)}
-                    className={inputCls} style={inputStyle}>
-                    {publishers.map((a) => <option key={a.slug} value={a.slug}>{a.name}</option>)}
-                  </select>
-                  {selectedAdv && profile && (
-                    <CopyBox value={`${baseUrl}/go/${selectedAdv}?mb=${profile.id}`} />
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                    <div>
+                      <label className={labelCls}>Advertiser</label>
+                      <select value={selectedAdv} onChange={(e) => setSelectedAdv(e.target.value)}
+                        className={inputCls} style={inputStyle}>
+                        {advertisers.map((a) => <option key={a.slug} value={a.slug}>{a.name}</option>)}
+                      </select>
+                    </div>
+                    <div>
+                      <label className={labelCls}>Pixel</label>
+                      <select value={selectedPixel} onChange={(e) => setSelectedPixel(e.target.value)}
+                        className={inputCls} style={inputStyle}>
+                        {pixels.map((p) => <option key={p.id} value={p.id}>{p.label}</option>)}
+                      </select>
+                    </div>
+                  </div>
+                  {selectedAdv && selectedPixel && profile && (
+                    <CopyBox value={`${baseUrl}/go/${selectedAdv}?mb=${profile.id}&px=${selectedPixel}`} />
                   )}
                 </>
               )}
@@ -373,7 +441,7 @@ export default function MBDashboard() {
             <div className="flex items-center justify-between mb-4">
               <div>
                 <h2 className="text-[15px] font-bold text-slate-800">Your Meta Pixels</h2>
-                <p className="text-[11px] text-slate-400 mt-0.5">The default pixel gets notified via CAPI when your traffic converts.</p>
+                <p className="text-[11px] text-slate-400 mt-0.5">Each tracking link names one of these — add one per campaign/ad account you run.</p>
               </div>
               {!showPixelForm && !editPixel && (
                 <button onClick={() => setShowPixelForm(true)}
@@ -393,7 +461,7 @@ export default function MBDashboard() {
                   <div key={px.id}>
                     {editPixel?.id === px.id ? (
                       <PixelFormCard
-                        initial={{ label: px.label, pixel_id: px.pixel_id, access_token: '', ad_account_id: px.ad_account_id ?? '', is_default: px.is_default }}
+                        initial={{ label: px.label, pixel_id: px.pixel_id, access_token: '', ad_account_id: px.ad_account_id ?? '' }}
                         isEdit onSave={handleSavePixel} onCancel={() => setEditPixel(null)} saving={savingPixel}
                       />
                     ) : (
@@ -401,9 +469,6 @@ export default function MBDashboard() {
                         <div>
                           <div className="flex items-center gap-2">
                             <span className="text-[13px] font-bold text-slate-800">{px.label}</span>
-                            {px.is_default && (
-                              <span className="text-[9px] font-bold px-1.5 py-0.5 rounded" style={{ background: '#F0FDF4', color: '#15803D', border: '1px solid #BBF7D0' }}>Default</span>
-                            )}
                           </div>
                           <span className="text-[10px] text-slate-400 font-mono">{px.pixel_id}</span>
                         </div>

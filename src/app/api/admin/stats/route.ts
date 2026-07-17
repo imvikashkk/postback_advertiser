@@ -17,7 +17,7 @@ export async function GET(req: NextRequest) {
   const convFilter  = convConds.length  ? `AND ${convConds.join(' AND ')}`  : '';
 
   try {
-    const [overviewRes, byPublisherRes, byMediaBuyerRes] = await Promise.all([
+    const [overviewRes, byAdvertiserRes, byMediaBuyerRes] = await Promise.all([
       pool.query(`
         SELECT
           (SELECT COUNT(*) FROM adv_clicks c WHERE 1=1 ${clickFilter})           AS total_clicks,
@@ -30,9 +30,9 @@ export async function GET(req: NextRequest) {
           COUNT(DISTINCT c.id)                        AS clicks,
           COUNT(DISTINCT cv.id)                        AS conversions,
           COALESCE(SUM(cv.payout), 0)                  AS payout
-        FROM adv_publishers p
-        LEFT JOIN adv_clicks c       ON c.publisher_id = p.id ${clickFilter}
-        LEFT JOIN adv_conversions cv ON cv.publisher_id = p.id ${convFilter}
+        FROM adv_advertisers p
+        LEFT JOIN adv_clicks c       ON c.advertiser_id = p.id ${clickFilter}
+        LEFT JOIN adv_conversions cv ON cv.advertiser_id = p.id ${convFilter}
         GROUP BY p.id, p.name, p.slug, p.is_active
         ORDER BY clicks DESC
       `),
@@ -53,7 +53,7 @@ export async function GET(req: NextRequest) {
     return NextResponse.json({
       success: true,
       overview: overviewRes.rows[0],
-      by_publisher: byPublisherRes.rows,
+      by_advertiser: byAdvertiserRes.rows,
       by_media_buyer: byMediaBuyerRes.rows,
     });
   } catch (err) {

@@ -16,7 +16,7 @@ function getCookie(name: string): string | null {
 }
 
 // Fires the media buyer's Meta pixel (so Facebook sets its _fbp/_fbc cookies),
-// saves them against this click, then forwards to the publisher's landing page.
+// saves them against this click, then forwards to the advertiser's landing page.
 // There's no other moment we can do this — the redirect target isn't our page,
 // so this bridge page is the only place a browser pixel can ever fire.
 export default function GoRedirectClient({

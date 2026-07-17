@@ -25,41 +25,41 @@ function firstParam(params: URLSearchParams, keys: string[]): string | null {
 async function handlePostback(req: NextRequest, slug: string) {
   try {
     const pubRes = await pool.query(
-      `SELECT id, postback_key, payout AS default_payout, currency FROM adv_publishers WHERE slug = $1`,
+      `SELECT id, postback_key, payout AS default_payout, currency FROM adv_advertisers WHERE slug = $1`,
       [slug],
     );
-    const publisher = pubRes.rows[0];
-    if (!publisher) return new NextResponse('Unknown publisher', { status: 404 });
+    const advertiser = pubRes.rows[0];
+    if (!advertiser) return new NextResponse('Unknown advertiser', { status: 404 });
 
     const params = req.nextUrl.searchParams;
     const key = params.get('key');
-    if (!key || key !== publisher.postback_key) {
+    if (!key || key !== advertiser.postback_key) {
       return new NextResponse('Invalid key', { status: 401 });
     }
 
     const clickId = firstParam(params, CLICK_ID_KEYS);
     const payoutRaw = firstParam(params, PAYOUT_KEYS);
-    const payout = payoutRaw !== null && payoutRaw !== '' ? Number(payoutRaw) : publisher.default_payout;
+    const payout = payoutRaw !== null && payoutRaw !== '' ? Number(payoutRaw) : advertiser.default_payout;
     const event = firstParam(params, EVENT_KEYS) || 'conversion';
 
     const rawQuery: Record<string, string> = {};
     params.forEach((v, k) => { rawQuery[k] = v; });
 
     const insertRes = await pool.query(
-      `INSERT INTO adv_conversions (publisher_id, click_id, event, payout, status, raw_query, ip)
+      `INSERT INTO adv_conversions (advertiser_id, click_id, event, payout, status, raw_query, ip)
        VALUES ($1, $2, $3, $4, 'received', $5, $6)
        RETURNING id`,
-      [publisher.id, clickId, event, Number.isFinite(payout) ? payout : null, JSON.stringify(rawQuery), getIp(req)],
+      [advertiser.id, clickId, event, Number.isFinite(payout) ? payout : null, JSON.stringify(rawQuery), getIp(req)],
     );
     const conversionId = insertRes.rows[0].id;
 
     // Tell Meta this ad drove a real conversion, so the campaign keeps optimizing —
-    // even though the sale itself happened on the publisher's site, not ours.
+    // even though the sale itself happened on the advertiser's site, not ours.
     if (clickId) {
       const clickRes = await pool.query(
         `SELECT c.ip, c.user_agent, c.created_at, c.meta, px.pixel_id, px.access_token
          FROM adv_clicks c
-         JOIN adv_pixels px ON px.media_buyer_id = c.media_buyer_id AND px.is_default = true
+         JOIN adv_pixels px ON px.id = c.pixel_id
          WHERE c.click_id = $1`,
         [clickId],
       );
@@ -71,7 +71,7 @@ async function handlePostback(req: NextRequest, slug: string) {
           accessToken: click.access_token,
           eventId: `pb-${conversionId}`,
           value: Number.isFinite(payout) ? payout : null,
-          currency: publisher.currency,
+          currency: advertiser.currency,
           ip: click.ip || getIp(req),
           userAgent: click.user_agent || req.headers.get('user-agent') || 'Unknown',
           sourceUrl: `${process.env.NEXT_PUBLIC_APP_URL || ''}/go/${slug}`,
