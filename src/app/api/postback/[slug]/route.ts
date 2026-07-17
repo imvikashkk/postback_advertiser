@@ -42,6 +42,14 @@ async function handlePostback(req: NextRequest, slug: string) {
     const payout = payoutRaw !== null && payoutRaw !== '' ? Number(payoutRaw) : advertiser.default_payout;
     const event = firstParam(params, EVENT_KEYS) || 'conversion';
 
+    // Catches the postback URL template being hit as-is — with our own
+    // YOUR_SUBID_MACRO / YOUR_AMOUNT_MACRO placeholders never swapped for the
+    // advertiser's real macros. Reject outright instead of logging a conversion
+    // no click can ever match, which would silently inflate advertiser totals.
+    if (clickId && /^YOUR_/i.test(clickId)) {
+      return new NextResponse('click_id still contains a YOUR_..._MACRO placeholder — replace it with the advertiser\'s actual sub-id macro before use', { status: 400 });
+    }
+
     const rawQuery: Record<string, string> = {};
     params.forEach((v, k) => { rawQuery[k] = v; });
 
