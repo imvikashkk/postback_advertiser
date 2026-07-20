@@ -14,6 +14,7 @@ export async function GET(req: NextRequest) {
   const to   = url.searchParams.get('to')   || '';
   const mediaBuyerId = url.searchParams.get('media_buyer_id') || '';
   const search = url.searchParams.get('search') || '';
+  const capiStatus = url.searchParams.get('capi') || '';
 
   const conds: string[] = [];
   const params: unknown[] = [];
@@ -22,6 +23,9 @@ export async function GET(req: NextRequest) {
   if (to)   { params.push(to);   conds.push(`(cv.created_at AT TIME ZONE 'Asia/Kolkata')::date <= $${params.length}::date`); }
   if (mediaBuyerId) { params.push(mediaBuyerId); conds.push(`mb.id = $${params.length}`); }
   if (search) { params.push(`%${search}%`); conds.push(`(a.slug ILIKE $${params.length} OR a.name ILIKE $${params.length})`); }
+  if (capiStatus === 'sent')    conds.push(`cv.capi_sent = true`);
+  if (capiStatus === 'failed')  conds.push(`cv.capi_sent = false AND cv.capi_error IS NOT NULL`);
+  if (capiStatus === 'skipped') conds.push(`cv.capi_sent = false AND cv.capi_error IS NULL`);
 
   const where = conds.length ? `WHERE ${conds.join(' AND ')}` : '';
 
@@ -29,6 +33,7 @@ export async function GET(req: NextRequest) {
     const [rows, cnt] = await Promise.all([
       pool.query(
         `SELECT cv.id, cv.click_id, cv.event, cv.payout, cv.status, cv.created_at,
+                cv.capi_sent, cv.capi_error,
                 a.name AS advertiser_name, a.slug AS advertiser_slug,
                 mb.id AS media_buyer_id, mb.name AS media_buyer_name
          FROM adv_conversions cv

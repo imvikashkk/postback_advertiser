@@ -48,6 +48,7 @@ export async function sendMetaConversionEvent({
     const result = await response.json();
     console.log('Meta CAPI:', result);
     if (result.error) return result.error.message ?? 'CAPI error';
+    if (!response.ok) return `CAPI HTTP ${response.status}`;
     return null;
   } catch (err) {
     console.error('Meta CAPI error:', err);

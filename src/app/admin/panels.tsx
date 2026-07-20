@@ -31,6 +31,9 @@ interface Overview {
   total_clicks: string;
   total_conversions: string;
   total_payout: string;
+  capi_sent: string;
+  capi_failed: string;
+  capi_skipped: string;
 }
 
 interface AdvertiserStat {
@@ -59,10 +62,40 @@ interface ConversionRow {
   payout: string | null;
   status: string;
   created_at: string;
+  capi_sent: boolean;
+  capi_error: string | null;
   advertiser_name: string;
   advertiser_slug: string;
   media_buyer_id: number | null;
   media_buyer_name: string | null;
+}
+
+/* CAPI delivery status for a conversion row: sent to Meta, attempted-but-rejected,
+   or never attempted (no click_id match — usually a tracking link missing ?px=/?mb=). */
+function capiState(row: ConversionRow): 'sent' | 'failed' | 'skipped' {
+  if (row.capi_sent) return 'sent';
+  if (row.capi_error) return 'failed';
+  return 'skipped';
+}
+
+function CapiBadge({ row }: { row: ConversionRow }) {
+  const state = capiState(row);
+  const map = {
+    sent:    { label: 'Sent',    bg: '#F0FDF4', color: '#15803D', border: '#BBF7D0' },
+    failed:  { label: 'Failed',  bg: '#FEF2F2', color: '#B91C1C', border: '#FECACA' },
+    skipped: { label: !row.click_id ? 'No click_id' : 'No click match', bg: '#FFFBEB', color: '#A16207', border: '#FEF08A' },
+  } as const;
+  const s = map[state];
+  const title = state === 'failed'
+    ? row.capi_error ?? undefined
+    : state === 'skipped'
+      ? (row.click_id ? 'No matching click found for this click_id — check the tracking link had ?px= (and ?mb=) set' : 'Postback had no click_id, so nothing to match against')
+      : undefined;
+  return (
+    <span title={title} className="text-[9px] font-bold px-1.5 py-0.5 rounded" style={{ background: s.bg, color: s.color, border: `1px solid ${s.border}` }}>
+      {s.label}
+    </span>
+  );
 }
 
 interface MediaBuyer {
@@ -336,6 +369,9 @@ export function AdvertisersPanel() {
         { label: 'Clicks',      value: overview.total_clicks,      color: BLUE,     bg: BLUE_LT,   icon: 'M13 10V3L4 14h7v7l9-11h-7z' },
         { label: 'Conversions', value: overview.total_conversions, color: '#15803D', bg: '#F0FDF4', icon: 'M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z' },
         { label: 'Payout',      value: `₹${Number(overview.total_payout).toLocaleString('en-IN')}`, color: '#A16207', bg: '#FEFCE8', icon: 'M12 8c-1.657 0-3 .672-3 1.5S10.343 11 12 11s3 .672 3 1.5-1.343 1.5-3 1.5m0-6c1.11 0 2.08.402 2.599 1M12 8V6m0 8v2m0-10a9 9 0 100 18 9 9 0 000-18z' },
+        { label: 'Sent to Meta',  value: overview.capi_sent,    color: '#0EA5E9', bg: '#F0F9FF', icon: 'M22 2L11 13M22 2l-7 20-4-9-9-4 20-7z' },
+        { label: 'CAPI Failed',   value: overview.capi_failed,  color: '#DC2626', bg: '#FEF2F2', icon: 'M12 9v4m0 4h.01M10.29 3.86l-8.18 14.18A2 2 0 003.82 21h16.36a2 2 0 001.71-3.96L13.71 3.86a2 2 0 00-3.42 0z' },
+        { label: 'No Click Match', value: overview.capi_skipped, color: '#A16207', bg: '#FFFBEB', icon: 'M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z' },
       ]
     : [];
 
@@ -347,9 +383,9 @@ export function AdvertisersPanel() {
       />
 
       {/* Stat cards */}
-      <div className="grid grid-cols-3 gap-3 mb-6">
+      <div className="grid grid-cols-2 sm:grid-cols-3 gap-3 mb-6">
         {loadingStats
-          ? Array.from({ length: 3 }).map((_, i) => (
+          ? Array.from({ length: 6 }).map((_, i) => (
               <div key={i} className="rounded-[14px] px-4 py-4 animate-pulse bg-slate-100" style={{ height: 80 }} />
             ))
           : statCards.map((c) => (
@@ -705,20 +741,24 @@ export function ConversionsPanel() {
   const [allTime, setAllTime]   = useState(true);
   const [mbFilter, setMbFilter] = useState('');
   const [search, setSearch]     = useState('');
+  const [capiFilter, setCapiFilter] = useState<'' | 'sent' | 'failed' | 'skipped'>('');
   const [mediaBuyers, setMediaBuyers] = useState<MediaBuyer[]>([]);
   const [rows, setRows] = useState<ConversionRow[]>([]);
   const [loading, setLoading] = useState(true);
   const [page, setPage] = useState(1);
   const [total, setTotal] = useState(0);
   const [totalPages, setTotalPages] = useState(1);
+  const [overview, setOverview] = useState<Overview | null>(null);
+  const [loadingStats, setLoadingStats] = useState(true);
 
-  const fetchData = useCallback(async (pg: number, from: string, to: string, mb: string, s: string) => {
+  const fetchData = useCallback(async (pg: number, from: string, to: string, mb: string, s: string, capi: string) => {
     setLoading(true);
     const params = new URLSearchParams({ page: String(pg) });
     if (from) params.set('from', from);
     if (to)   params.set('to', to);
     if (mb)   params.set('media_buyer_id', mb);
     if (s)    params.set('search', s);
+    if (capi) params.set('capi', capi);
     const res = await fetch(`/api/admin/conversions?${params}`);
     if (res.status === 401) { adminLogout(); return; }
     const json = await res.json();
@@ -726,16 +766,59 @@ export function ConversionsPanel() {
     setLoading(false);
   }, []);
 
+  const fetchStats = useCallback(async (from: string, to: string, mb: string) => {
+    setLoadingStats(true);
+    const params = new URLSearchParams();
+    if (from) params.set('from', from);
+    if (to)   params.set('to', to);
+    if (mb)   params.set('media_buyer_id', mb);
+    const res = await fetch(`/api/admin/stats?${params}`);
+    if (res.status === 401) { adminLogout(); return; }
+    const json = await res.json();
+    if (json.success) setOverview(json.overview);
+    setLoadingStats(false);
+  }, []);
+
   useEffect(() => {
-    fetchData(page, allTime ? '' : fromDate, allTime ? '' : toDate, mbFilter, search);
-  }, [page, fromDate, toDate, allTime, mbFilter, search, fetchData]);
+    fetchData(page, allTime ? '' : fromDate, allTime ? '' : toDate, mbFilter, search, capiFilter);
+  }, [page, fromDate, toDate, allTime, mbFilter, search, capiFilter, fetchData]);
+
+  useEffect(() => {
+    fetchStats(allTime ? '' : fromDate, allTime ? '' : toDate, mbFilter);
+  }, [fromDate, toDate, allTime, mbFilter, fetchStats]);
 
   useEffect(() => {
     fetch('/api/admin/mediabuyers').then((r) => r.json()).then((json) => { if (json.success) setMediaBuyers(json.data); }).catch(() => {});
   }, []);
 
+  const capiCards = overview
+    ? [
+        { key: '' as const,        label: 'Postbacks',   value: overview.total_conversions, color: '#334155', bg: '#F8FAFC' },
+        { key: 'sent' as const,    label: 'Sent to Meta', value: overview.capi_sent,         color: '#15803D', bg: '#F0FDF4' },
+        { key: 'failed' as const,  label: 'Failed',        value: overview.capi_failed,       color: '#B91C1C', bg: '#FEF2F2' },
+        { key: 'skipped' as const, label: 'No click match', value: overview.capi_skipped,    color: '#A16207', bg: '#FFFBEB' },
+      ]
+    : [];
+
   return (
     <div>
+      {/* CAPI delivery stat cards — how many postbacks actually reached Meta.
+          Click a card to filter the table below to that bucket. */}
+      <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 mb-5">
+        {loadingStats
+          ? Array.from({ length: 4 }).map((_, i) => (
+              <div key={i} className="rounded-[14px] px-4 py-4 animate-pulse bg-slate-100" style={{ height: 72 }} />
+            ))
+          : capiCards.map((c) => (
+              <button key={c.label} onClick={() => { setCapiFilter(c.key); setPage(1); }}
+                className="rounded-[14px] px-4 py-3.5 text-left transition-all"
+                style={{ background: c.bg, border: `1.5px solid ${capiFilter === c.key ? c.color : c.color + '22'}` }}>
+                <p className="text-[9px] font-bold uppercase tracking-[.15em] mb-0.5" style={{ color: c.color + 'AA' }}>{c.label}</p>
+                <p className="text-[20px] font-black leading-none" style={{ color: c.color }}>{c.value}</p>
+              </button>
+            ))}
+      </div>
+
       <DateFilterBar
         fromDate={fromDate} toDate={toDate} allTime={allTime}
         onFromChange={(v) => { setFromDate(v); setPage(1); }}
@@ -770,8 +853,8 @@ export function ConversionsPanel() {
           />
         </div>
 
-        {(mbFilter || search) && (
-          <button onClick={() => { setMbFilter(''); setSearch(''); setPage(1); }}
+        {(mbFilter || search || capiFilter) && (
+          <button onClick={() => { setMbFilter(''); setSearch(''); setCapiFilter(''); setPage(1); }}
             className="px-2.5 py-1.5 rounded-[8px] text-[11px] font-semibold text-slate-500 hover:bg-slate-100 transition-colors"
             style={{ border: '1.5px solid #E2E8F0' }}>
             Clear
@@ -788,7 +871,7 @@ export function ConversionsPanel() {
           <table className="w-full text-left min-w-[900px]">
             <thead>
               <tr style={{ borderBottom: '1px solid #F1F5F9', background: '#FAFAFA' }}>
-                {['Advertiser', 'Media Buyer', 'Click ID', 'Event', 'Payout', 'Status', 'Date & Time'].map((h) => (
+                {['Advertiser', 'Media Buyer', 'Click ID', 'Event', 'Payout', 'Status', 'Meta CAPI', 'Date & Time'].map((h) => (
                   <th key={h} className="px-5 py-3 text-[9px] font-bold uppercase tracking-[.16em] text-slate-400">{h}</th>
                 ))}
               </tr>
@@ -797,13 +880,13 @@ export function ConversionsPanel() {
               {loading ? (
                 Array.from({ length: 6 }).map((_, i) => (
                   <tr key={i} style={{ borderBottom: '1px solid #F8FAFC' }}>
-                    {[110, 100, 140, 80, 60, 70, 130].map((w, j) => (
+                    {[110, 100, 140, 80, 60, 70, 70, 130].map((w, j) => (
                       <td key={j} className="px-5 py-3.5"><div className="h-4 rounded-lg animate-pulse bg-slate-100" style={{ width: w }} /></td>
                     ))}
                   </tr>
                 ))
               ) : rows.length === 0 ? (
-                <tr><td colSpan={7} className="px-5 py-10 text-center text-[13px] text-slate-400">No postbacks found</td></tr>
+                <tr><td colSpan={8} className="px-5 py-10 text-center text-[13px] text-slate-400">No postbacks found</td></tr>
               ) : (
                 rows.map((row) => (
                   <tr key={row.id} style={{ borderBottom: '1px solid #F8FAFC' }}>
@@ -824,6 +907,7 @@ export function ConversionsPanel() {
                     <td className="px-5 py-3.5">
                       <span className="text-[9px] font-bold px-1.5 py-0.5 rounded" style={{ background: '#F0FDF4', color: '#15803D', border: '1px solid #BBF7D0' }}>{row.status}</span>
                     </td>
+                    <td className="px-5 py-3.5"><CapiBadge row={row} /></td>
                     <td className="px-5 py-3.5"><span className="text-[11px] text-slate-400">{formatDate(row.created_at)}</span></td>
                   </tr>
                 ))
