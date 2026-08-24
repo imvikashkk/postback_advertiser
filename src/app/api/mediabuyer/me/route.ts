@@ -6,6 +6,17 @@ export async function GET(req: NextRequest) {
   const mediaBuyerId = verifyToken(req.cookies.get('pa_mb_token')?.value);
   if (!mediaBuyerId) return NextResponse.json({ success: false }, { status: 401 });
 
+  const url  = new URL(req.url);
+  const from = url.searchParams.get('from') || '';
+  const to   = url.searchParams.get('to')   || '';
+
+  const clickConds: string[] = [];
+  const convConds: string[] = [];
+  if (from) { clickConds.push(`(created_at AT TIME ZONE 'Asia/Kolkata')::date >= '${from}'::date`); convConds.push(`(cv.created_at AT TIME ZONE 'Asia/Kolkata')::date >= '${from}'::date`); }
+  if (to)   { clickConds.push(`(created_at AT TIME ZONE 'Asia/Kolkata')::date <= '${to}'::date`);   convConds.push(`(cv.created_at AT TIME ZONE 'Asia/Kolkata')::date <= '${to}'::date`); }
+  const clickFilter = clickConds.length ? `AND ${clickConds.join(' AND ')}` : '';
+  const convFilter  = convConds.length  ? `AND ${convConds.join(' AND ')}`  : '';
+
   try {
     const [profileRes, pixelsRes, advertisersRes, statsRes] = await Promise.all([
       pool.query(`SELECT id, name, email FROM adv_media_buyers WHERE id = $1 AND is_active = true`, [mediaBuyerId]),
@@ -16,9 +27,9 @@ export async function GET(req: NextRequest) {
       pool.query(`SELECT id, name, slug FROM adv_advertisers WHERE is_active = true ORDER BY name ASC`),
       pool.query(
         `SELECT
-           (SELECT COUNT(*) FROM adv_clicks WHERE media_buyer_id = $1)      AS total_clicks,
-           (SELECT COUNT(*) FROM adv_conversions cv JOIN adv_clicks c ON c.click_id = cv.click_id WHERE c.media_buyer_id = $1) AS total_conversions,
-           (SELECT COALESCE(SUM(cv.payout),0) FROM adv_conversions cv JOIN adv_clicks c ON c.click_id = cv.click_id WHERE c.media_buyer_id = $1) AS total_payout`,
+           (SELECT COUNT(*) FROM adv_clicks WHERE media_buyer_id = $1 ${clickFilter})      AS total_clicks,
+           (SELECT COUNT(*) FROM adv_conversions cv JOIN adv_clicks c ON c.click_id = cv.click_id WHERE c.media_buyer_id = $1 ${convFilter}) AS total_conversions,
+           (SELECT COALESCE(SUM(cv.payout),0) FROM adv_conversions cv JOIN adv_clicks c ON c.click_id = cv.click_id WHERE c.media_buyer_id = $1 ${convFilter}) AS total_payout`,
         [mediaBuyerId],
       ),
     ]);

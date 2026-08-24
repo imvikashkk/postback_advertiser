@@ -305,12 +305,18 @@ export default function MBDashboard() {
   const [deleteConfirm, setDeleteConfirm] = useState<number | null>(null);
   const [logoutConfirm, setLogoutConfirm] = useState(false);
   const [mbTab, setMbTab] = useState<MBTab>('overview');
+  const [fromDate, setFromDate] = useState(todayStr);
+  const [toDate, setToDate]     = useState(todayStr);
+  const [allTime, setAllTime]   = useState(true);
 
   const baseUrl = typeof window !== 'undefined' ? window.location.origin : '';
 
-  const fetchMe = useCallback(async () => {
+  const fetchMe = useCallback(async (from: string, to: string) => {
     setLoading(true);
-    const res = await fetch('/api/mediabuyer/me');
+    const params = new URLSearchParams();
+    if (from) params.set('from', from);
+    if (to)   params.set('to', to);
+    const res = await fetch(`/api/mediabuyer/me?${params}`);
     if (res.status === 401) { window.location.href = '/mediabuyer/login'; return; }
     const json = await res.json();
     if (json.success) {
@@ -324,7 +330,9 @@ export default function MBDashboard() {
     setLoading(false);
   }, []);
 
-  useEffect(() => { fetchMe(); }, [fetchMe]);
+  useEffect(() => {
+    fetchMe(allTime ? '' : fromDate, allTime ? '' : toDate);
+  }, [fromDate, toDate, allTime, fetchMe]);
 
   async function handleSavePixel(form: PixelForm) {
     setSavingPixel(true);
@@ -334,14 +342,14 @@ export default function MBDashboard() {
     const json = await res.json();
     setSavingPixel(false);
     if (json.success) {
-      setShowPixelForm(false); setEditPixel(null); fetchMe();
+      setShowPixelForm(false); setEditPixel(null); fetchMe(allTime ? '' : fromDate, allTime ? '' : toDate);
     } else { alert(json.message ?? 'Error saving pixel'); }
   }
 
   async function handleDeletePixel(id: number) {
     const res = await fetch(`/api/mediabuyer/pixels/${id}`, { method: 'DELETE' });
     const json = await res.json();
-    if (json.success) { setDeleteConfirm(null); fetchMe(); } else { alert(json.message ?? 'Delete failed'); }
+    if (json.success) { setDeleteConfirm(null); fetchMe(allTime ? '' : fromDate, allTime ? '' : toDate); } else { alert(json.message ?? 'Delete failed'); }
   }
 
   const statCards = stats ? [
@@ -397,6 +405,10 @@ export default function MBDashboard() {
           </div>
         ) : (
           <>
+            <DateFilterBar
+              fromDate={fromDate} toDate={toDate} allTime={allTime}
+              onFromChange={setFromDate} onToChange={setToDate} onAllTimeToggle={() => setAllTime((p) => !p)}
+            />
             <div className="grid grid-cols-3 gap-3 mb-6">
               {statCards.map((c) => (
                 <div key={c.label} className="rounded-[14px] px-4 py-4" style={{ background: c.bg, border: `1px solid ${c.color}22` }}>
