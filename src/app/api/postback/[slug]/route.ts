@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import pool from '@/lib/db';
 import { sendMetaConversionEvent } from '@/lib/metaCapi';
+import { notifyPublisherForConversion } from '@/lib/publisherPostback';
 
 function getIp(req: NextRequest): string {
   return (
@@ -39,7 +40,10 @@ async function handlePostback(req: NextRequest, slug: string) {
 
     const clickId = firstParam(params, CLICK_ID_KEYS);
     const payoutRaw = firstParam(params, PAYOUT_KEYS);
-    const payout = payoutRaw !== null && payoutRaw !== '' ? Number(payoutRaw) : advertiser.default_payout;
+    // pg returns NUMERIC as a string — coerce, or Number.isFinite() below always rejects the default.
+    const payout = payoutRaw !== null && payoutRaw !== ''
+      ? Number(payoutRaw)
+      : (advertiser.default_payout !== null ? Number(advertiser.default_payout) : null);
     const event = firstParam(params, EVENT_KEYS) || 'conversion';
 
     // Catches the postback URL template being hit as-is — with our own
@@ -94,6 +98,13 @@ async function handlePostback(req: NextRequest, slug: string) {
           [capiError === null, capiError, conversionId],
         );
       }
+
+      // The click came from an external publisher (via one of our offers) —
+      // fire THEIR postback with their own click id, so their tracker credits it too.
+      await notifyPublisherForConversion({
+        conversionId, clickId, event,
+        payout: Number.isFinite(payout) ? payout : null,
+      });
     }
 
     return new NextResponse('OK', { status: 200 });

@@ -22,7 +22,7 @@ export async function GET(req: NextRequest) {
   if (from) { params.push(from); conds.push(`(cv.created_at AT TIME ZONE 'Asia/Kolkata')::date >= $${params.length}::date`); }
   if (to)   { params.push(to);   conds.push(`(cv.created_at AT TIME ZONE 'Asia/Kolkata')::date <= $${params.length}::date`); }
   if (mediaBuyerId) { params.push(mediaBuyerId); conds.push(`mb.id = $${params.length}`); }
-  if (search) { params.push(`%${search}%`); conds.push(`(a.slug ILIKE $${params.length} OR a.name ILIKE $${params.length})`); }
+  if (search) { params.push(`%${search}%`); conds.push(`(a.slug ILIKE $${params.length} OR a.name ILIKE $${params.length} OR o.name ILIKE $${params.length})`); }
   if (capiStatus === 'sent')    conds.push(`cv.capi_sent = true`);
   if (capiStatus === 'failed')  conds.push(`cv.capi_sent = false AND cv.capi_error IS NOT NULL`);
   if (capiStatus === 'skipped') conds.push(`cv.capi_sent = false AND cv.capi_error IS NULL`);
@@ -35,11 +35,16 @@ export async function GET(req: NextRequest) {
         `SELECT cv.id, cv.click_id, cv.event, cv.payout, cv.status, cv.created_at,
                 cv.capi_sent, cv.capi_error,
                 a.name AS advertiser_name, a.slug AS advertiser_slug,
-                mb.id AS media_buyer_id, mb.name AS media_buyer_name
+                mb.id AS media_buyer_id, mb.name AS media_buyer_name,
+                pb.id AS publisher_id, pb.name AS publisher_name,
+                o.id AS offer_id, o.name AS offer_name,
+                cv.pub_payout, cv.pub_postback_url, cv.pub_postback_sent, cv.pub_postback_error
          FROM adv_conversions cv
-         JOIN adv_advertisers a ON a.id = cv.advertiser_id
+         LEFT JOIN adv_advertisers a  ON a.id = cv.advertiser_id
+         LEFT JOIN adv_offers o       ON o.id = cv.offer_id
          LEFT JOIN adv_clicks c       ON c.click_id = cv.click_id
          LEFT JOIN adv_media_buyers mb ON mb.id = c.media_buyer_id
+         LEFT JOIN adv_publishers pb   ON pb.id = c.publisher_id
          ${where}
          ORDER BY cv.created_at DESC
          LIMIT ${LIMIT} OFFSET ${offset}`,
@@ -48,7 +53,8 @@ export async function GET(req: NextRequest) {
       pool.query(
         `SELECT COUNT(*)
          FROM adv_conversions cv
-         JOIN adv_advertisers a ON a.id = cv.advertiser_id
+         LEFT JOIN adv_advertisers a  ON a.id = cv.advertiser_id
+         LEFT JOIN adv_offers o       ON o.id = cv.offer_id
          LEFT JOIN adv_clicks c       ON c.click_id = cv.click_id
          LEFT JOIN adv_media_buyers mb ON mb.id = c.media_buyer_id
          ${where}`,

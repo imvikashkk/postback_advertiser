@@ -64,10 +64,88 @@ interface ConversionRow {
   created_at: string;
   capi_sent: boolean;
   capi_error: string | null;
-  advertiser_name: string;
-  advertiser_slug: string;
+  advertiser_name: string | null;
+  advertiser_slug: string | null;
+  offer_id: number | null;
+  offer_name: string | null;
   media_buyer_id: number | null;
   media_buyer_name: string | null;
+  publisher_id: number | null;
+  publisher_name: string | null;
+  pub_payout: string | null;
+  pub_postback_url: string | null;
+  pub_postback_sent: boolean;
+  pub_postback_error: string | null;
+}
+
+interface Publisher {
+  id: number;
+  name: string;
+  postback_url_template: string;
+  payout: string | null;
+  currency: string;
+  is_active: boolean;
+  created_at: string;
+}
+
+interface Offer {
+  id: number;
+  name: string;
+  advertiser_id: number | null;
+  advertiser_name: string | null;
+  advertiser_slug: string | null;
+  landing_url_template: string | null;
+  postback_key: string;
+  payout: string | null;
+  currency: string;
+  is_active: boolean;
+  publisher_ids: number[];
+  created_at: string;
+}
+
+interface OfferStat {
+  id: number;
+  name: string;
+  is_active: boolean;
+  clicks: string;
+  conversions: string;
+  payout: string;
+}
+
+interface PublisherStat {
+  id: number;
+  name: string;
+  is_active: boolean;
+  clicks: string;
+  conversions: string;
+  postbacks_sent: string;
+  postbacks_failed: string;
+  payout: string;
+}
+
+/* Outbound postback to the publisher who sent the click, if any. */
+function PubPostbackCell({ row }: { row: ConversionRow }) {
+  if (!row.publisher_name) return <span className="text-[12px] text-slate-300">—</span>;
+  const state = row.pub_postback_sent ? 'sent' : row.pub_postback_error ? 'failed' : 'skipped';
+  const map = {
+    sent:    { label: 'Sent',          bg: '#F0FDF4', color: '#15803D', border: '#BBF7D0' },
+    failed:  { label: 'Failed',        bg: '#FEF2F2', color: '#B91C1C', border: '#FECACA' },
+    skipped: { label: 'Not fired',     bg: '#FFFBEB', color: '#A16207', border: '#FEF08A' },
+  } as const;
+  const s = map[state];
+  const title = state === 'failed'
+    ? `${row.pub_postback_error}\n${row.pub_postback_url ?? ''}`
+    : state === 'sent'
+      ? row.pub_postback_url ?? undefined
+      : 'Click had no ?sub= (publisher click id), or the publisher is inactive';
+  return (
+    <div>
+      <span className="text-[11px] font-semibold text-slate-600 block">{row.publisher_name}</span>
+      <span title={title} className="text-[9px] font-bold px-1.5 py-0.5 rounded inline-block mt-0.5" style={{ background: s.bg, color: s.color, border: `1px solid ${s.border}` }}>
+        {s.label}{row.pub_payout ? ` · ₹${Number(row.pub_payout).toLocaleString('en-IN')}` : ''}
+      </span>
+    </div>
+  );
 }
 
 /* CAPI delivery status for a conversion row: sent to Meta, attempted-but-rejected,
@@ -231,7 +309,7 @@ function CopyField({ label, value, hint }: { label: string; value: string; hint?
   return (
     <div className="mt-1.5">
       <div className="flex items-center gap-2">
-        <span className="text-[9px] font-bold uppercase tracking-wide text-slate-400 shrink-0 w-16">{label}</span>
+        <span title={label} className="text-[9px] font-bold uppercase tracking-wide text-slate-400 shrink-0 w-16 truncate">{label}</span>
         <code className="text-[10.5px] px-2 py-1 rounded-[6px] font-mono truncate max-w-xs sm:max-w-sm md:max-w-md select-all"
           style={{ background: BLUE_LT, color: BLUE, border: `1px solid ${BLUE_MD}` }}>
           {value}
@@ -505,6 +583,700 @@ export function AdvertisersPanel() {
                             className="px-3 py-1.5 rounded-[8px] text-[11px] font-bold text-slate-600 hover:bg-slate-100 transition-colors"
                             style={{ background: '#F1F5F9', border: '1px solid #E2E8F0' }}>Edit</button>
                           <button onClick={() => setDeleteConfirm(adv.id)}
+                            className="px-3 py-1.5 rounded-[8px] text-[11px] font-bold transition-colors"
+                            style={{ background: '#FEF2F2', color: '#B91C1C', border: '1px solid #FECACA' }}>Delete</button>
+                        </>
+                      )}
+                    </div>
+                  </div>
+                </div>
+              )}
+            </div>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
+/* ── Publisher Form ──────────────────────────────────────── */
+const EMPTY_PUBLISHER = { name: '', postback_url_template: '', payout: '', currency: 'INR', is_active: true };
+type PublisherFormData = typeof EMPTY_PUBLISHER;
+
+function PublisherForm({
+  initial = EMPTY_PUBLISHER, isEdit = false, onSave, onCancel, saving,
+}: {
+  initial?: PublisherFormData;
+  isEdit?: boolean;
+  onSave: (data: PublisherFormData) => void;
+  onCancel: () => void;
+  saving: boolean;
+}) {
+  const [form, setForm] = useState(initial);
+  const set = (k: keyof PublisherFormData, v: string | boolean) => setForm((f) => ({ ...f, [k]: v }));
+  const url = form.postback_url_template.trim();
+  const hasClickId = url.includes('{click_id}');
+  const isHttp = /^https?:\/\//i.test(url);
+  const canSave = form.name.trim().length > 0 && hasClickId && isHttp;
+
+  return (
+    <div className="rounded-[14px] p-5 mb-4" style={{ ...card, background: '#F8FAFC', border: `1.5px solid ${isEdit ? BLUE_MD : '#E2E8F0'}` }}>
+      <p className="text-[13px] font-bold text-slate-800 mb-4">{isEdit ? 'Edit publisher' : 'Add publisher'}</p>
+
+      <div className="mb-3">
+        <label className={labelCls}>Name <span style={{ color: BLUE }}>*</span></label>
+        <input value={form.name} onChange={(e) => set('name', e.target.value)}
+          placeholder="e.g. AdsNetwork Pvt Ltd" autoFocus={!isEdit} autoComplete="off"
+          className={inputCls} style={inputStyle} />
+      </div>
+
+      <div className="mb-3">
+        <label className={labelCls}>
+          Publisher&apos;s postback URL <span style={{ color: BLUE }}>*</span>{' '}
+          <span className="text-slate-300 font-normal normal-case tracking-normal">(macros: {'{click_id} {payout} {currency} {event} {txn_id}'})</span>
+        </label>
+        <input value={form.postback_url_template} onChange={(e) => set('postback_url_template', e.target.value)}
+          placeholder="https://their-tracker.com/postback?clickid={click_id}&payout={payout}"
+          autoComplete="off" className={inputCls + ' font-mono'} style={inputStyle} />
+        {url.length > 0 && (!isHttp || !hasClickId) && (
+          <p className="text-[11px] text-red-500 font-semibold mt-1.5">
+            {!isHttp
+              ? 'Must start with http:// or https://'
+              : <>Must contain the literal <code className="font-mono">{'{click_id}'}</code> placeholder — replace whatever macro the publisher&apos;s tracker uses for their click id with exactly <code className="font-mono">{'{click_id}'}</code>; we fill it with the <code className="font-mono">sub</code> they sent on the click.</>}
+          </p>
+        )}
+      </div>
+
+      <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 mb-4">
+        <div>
+          <label className={labelCls}>Payout to publisher <span className="text-slate-300 font-normal normal-case">(fills {'{payout}'})</span></label>
+          <input value={form.payout} onChange={(e) => set('payout', e.target.value.replace(/[^0-9.]/g, ''))}
+            placeholder="blank = offer / advertiser payout" autoComplete="off" className={inputCls} style={inputStyle} />
+        </div>
+        <div>
+          <label className={labelCls}>Currency</label>
+          <input value={form.currency} onChange={(e) => set('currency', e.target.value.toUpperCase())}
+            placeholder="INR" autoComplete="off" className={inputCls} style={inputStyle} />
+        </div>
+      </div>
+
+      <label className="flex items-center gap-2 mb-4 cursor-pointer select-none">
+        <input type="checkbox" checked={form.is_active} onChange={(e) => set('is_active', e.target.checked)} className="w-3.5 h-3.5" />
+        <span className="text-[12px] font-semibold text-slate-600">Active</span>
+      </label>
+
+      <div className="flex items-center gap-2">
+        <button onClick={() => onSave(form)} disabled={saving || !canSave}
+          className="px-4 py-2 rounded-[8px] text-[12px] font-bold text-white transition-all disabled:opacity-40"
+          style={{ background: BLUE }}>
+          {saving ? 'Saving…' : isEdit ? 'Update' : 'Save'}
+        </button>
+        <button onClick={onCancel}
+          className="px-4 py-2 rounded-[8px] text-[12px] font-semibold text-slate-500 transition-colors hover:bg-slate-100"
+          style={{ background: '#F1F5F9', border: '1px solid #E2E8F0' }}>
+          Cancel
+        </button>
+      </div>
+    </div>
+  );
+}
+
+/* A publisher's tracking links — one per offer they're assigned to. */
+function PublisherOfferLinks({ publisher, offers, baseUrl }: { publisher: Publisher; offers: Offer[]; baseUrl: string }) {
+  const assigned = offers.filter((o) => o.publisher_ids.includes(publisher.id));
+
+  if (assigned.length === 0) {
+    return <p className="text-[10.5px] text-slate-400 mt-2">No offers assigned yet — assign this publisher on the Offers page to get a tracking link.</p>;
+  }
+
+  return (
+    <div className="mt-1">
+      {assigned.map((o) => (
+        <CopyField key={o.id} label={o.is_active ? o.name : `${o.name} (off)`}
+          value={`${baseUrl}/o/${o.id}?pub=${publisher.id}&sub=THEIR_CLICK_ID_MACRO`} />
+      ))}
+      <p className="text-[9.5px] text-slate-400 mt-1 ml-[72px]">Give these to the publisher. They replace THEIR_CLICK_ID_MACRO with their tracker&apos;s click-id macro — we echo it back as {'{click_id}'} in their postback.</p>
+    </div>
+  );
+}
+
+/* ── Publishers Panel ───────────────────────────────────── */
+export function PublishersPanel() {
+  const [fromDate, setFromDate] = useState(todayStr);
+  const [toDate, setToDate]     = useState(todayStr);
+  const [allTime, setAllTime]   = useState(true);
+  const [byPublisher, setByPublisher] = useState<PublisherStat[]>([]);
+  const [loadingStats, setLoadingStats] = useState(true);
+
+  const [list, setList] = useState<Publisher[]>([]);
+  const [offers, setOffers] = useState<Offer[]>([]);
+  const [listLoading, setListLoading] = useState(true);
+  const [showForm, setShowForm]       = useState(false);
+  const [editPub, setEditPub]         = useState<Publisher | null>(null);
+  const [saving, setSaving]           = useState(false);
+  const [deleteConfirm, setDeleteConfirm] = useState<number | null>(null);
+  const [testing, setTesting]         = useState<number | null>(null);
+  const [testResult, setTestResult]   = useState<{ id: number; ok: boolean; message: string; url?: string } | null>(null);
+
+  const baseUrl = typeof window !== 'undefined' ? window.location.origin : (process.env.NEXT_PUBLIC_APP_URL ?? '');
+
+  const fetchStats = useCallback(async (from: string, to: string) => {
+    setLoadingStats(true);
+    const params = new URLSearchParams();
+    if (from) params.set('from', from);
+    if (to)   params.set('to', to);
+    const res = await fetch(`/api/admin/stats?${params}`);
+    if (res.status === 401) { adminLogout(); return; }
+    const json = await res.json();
+    if (json.success) setByPublisher(json.by_publisher);
+    setLoadingStats(false);
+  }, []);
+
+  const fetchList = useCallback(async () => {
+    setListLoading(true);
+    const res = await fetch('/api/admin/publishers');
+    if (res.status === 401) { adminLogout(); return; }
+    const json = await res.json();
+    if (json.success) setList(json.data);
+    setListLoading(false);
+  }, []);
+
+  useEffect(() => {
+    fetchStats(allTime ? '' : fromDate, allTime ? '' : toDate);
+  }, [fromDate, toDate, allTime, fetchStats]);
+  useEffect(() => { fetchList(); }, [fetchList]);
+  useEffect(() => {
+    fetch('/api/admin/offers').then((r) => r.json()).then((json) => { if (json.success) setOffers(json.data); }).catch(() => {});
+  }, []);
+
+  async function handleSave(form: PublisherFormData) {
+    setSaving(true);
+    const url    = editPub ? `/api/admin/publishers/${editPub.id}` : '/api/admin/publishers';
+    const method = editPub ? 'PUT' : 'POST';
+    const res    = await fetch(url, {
+      method, headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ ...form, payout: form.payout ? Number(form.payout) : null }),
+    });
+    const json = await res.json();
+    setSaving(false);
+    if (json.success) {
+      setShowForm(false); setEditPub(null);
+      fetchList(); fetchStats(allTime ? '' : fromDate, allTime ? '' : toDate);
+    } else { alert(json.message ?? 'Error saving publisher'); }
+  }
+
+  async function handleDelete(id: number) {
+    const res  = await fetch(`/api/admin/publishers/${id}`, { method: 'DELETE' });
+    const json = await res.json();
+    if (json.success) {
+      setDeleteConfirm(null); fetchList(); fetchStats(allTime ? '' : fromDate, allTime ? '' : toDate);
+    } else { alert(json.message ?? 'Delete failed'); }
+  }
+
+  async function handleTest(id: number) {
+    setTesting(id); setTestResult(null);
+    const res  = await fetch(`/api/admin/publishers/${id}`, { method: 'POST' });
+    const json = await res.json();
+    setTesting(null);
+    setTestResult({ id, ok: !!json.success, message: json.message ?? (json.success ? 'OK' : 'Failed'), url: json.url });
+  }
+
+  return (
+    <div>
+      <DateFilterBar
+        fromDate={fromDate} toDate={toDate} allTime={allTime}
+        onFromChange={setFromDate} onToChange={setToDate} onAllTimeToggle={() => setAllTime((p) => !p)}
+      />
+
+      {!loadingStats && byPublisher.length > 0 && (
+        <div className="rounded-[14px] overflow-hidden mb-6" style={card}>
+          <div className="px-4 py-3" style={{ borderBottom: '1px solid #F1F5F9', background: '#F8FAFC' }}>
+            <p className="text-[11px] font-bold uppercase tracking-[.15em] text-slate-400">By Publisher</p>
+          </div>
+          <div className="overflow-x-auto">
+            <table className="w-full text-left">
+              <thead>
+                <tr style={{ borderBottom: '1px solid #F1F5F9', background: '#FAFAFA' }}>
+                  {['Publisher', 'Clicks', 'Conversions', 'CVR', 'Postbacks sent', 'Failed', 'Payout'].map((h) => (
+                    <th key={h} className="px-4 py-2.5 text-[9px] font-bold uppercase tracking-[.16em] text-slate-400">{h}</th>
+                  ))}
+                </tr>
+              </thead>
+              <tbody>
+                {byPublisher.map((row) => (
+                  <tr key={row.id} className="hover:bg-blue-50 transition-colors" style={{ borderBottom: '1px solid #F8FAFC' }}>
+                    <td className="px-4 py-3">
+                      <span className="text-[12px] font-bold text-slate-800 block">{row.name}</span>
+                      {!row.is_active && <span className="text-[9px] text-slate-400 block mt-0.5">Inactive</span>}
+                    </td>
+                    <td className="px-4 py-3 text-[13px] font-black text-slate-800">{row.clicks}</td>
+                    <td className="px-4 py-3 text-[12px] font-bold text-blue-600">{row.conversions}</td>
+                    <td className="px-4 py-3 text-[12px] text-slate-500">
+                      {Number(row.clicks) > 0 ? `${((Number(row.conversions) / Number(row.clicks)) * 100).toFixed(1)}%` : '—'}
+                    </td>
+                    <td className="px-4 py-3 text-[12px] font-bold text-green-700">{row.postbacks_sent}</td>
+                    <td className="px-4 py-3 text-[12px] font-bold" style={{ color: Number(row.postbacks_failed) > 0 ? '#B91C1C' : '#94A3B8' }}>{row.postbacks_failed}</td>
+                    <td className="px-4 py-3 text-[12px] font-bold text-amber-700">₹{Number(row.payout).toLocaleString('en-IN')}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </div>
+      )}
+
+      <div className="flex items-center justify-between mb-4">
+        <p className="text-[12px] text-slate-500">{list.length} publisher{list.length !== 1 ? 's' : ''} configured</p>
+        {!showForm && !editPub && (
+          <button onClick={() => setShowForm(true)}
+            className="flex items-center gap-1.5 px-3.5 py-2 rounded-[10px] text-[12px] font-bold text-white shrink-0 transition-all hover:opacity-90"
+            style={{ background: BLUE, boxShadow: `0 4px 14px -4px ${BLUE}88` }}>
+            <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2.5} strokeLinecap="round"><path d="M12 5v14M5 12h14" /></svg>
+            New publisher
+          </button>
+        )}
+      </div>
+
+      {showForm && <PublisherForm onSave={handleSave} onCancel={() => setShowForm(false)} saving={saving} />}
+
+      {listLoading ? (
+        <div className="space-y-3">
+          {Array.from({ length: 2 }).map((_, i) => <div key={i} className="h-24 rounded-[12px] animate-pulse bg-slate-100" />)}
+        </div>
+      ) : list.length === 0 && !showForm ? (
+        <p className="text-[13px] text-slate-400 py-6">No publishers yet. Add one with their postback URL, then assign them offers.</p>
+      ) : (
+        <div className="space-y-2">
+          {list.map((pub) => (
+            <div key={pub.id}>
+              {editPub?.id === pub.id ? (
+                <PublisherForm
+                  initial={{
+                    name: pub.name, postback_url_template: pub.postback_url_template,
+                    payout: pub.payout ?? '', currency: pub.currency, is_active: pub.is_active,
+                  }}
+                  isEdit onSave={handleSave} onCancel={() => setEditPub(null)} saving={saving}
+                />
+              ) : (
+                <div className="px-4 py-3.5 rounded-[12px] hover:shadow-sm transition-all" style={card}>
+                  <div className="flex items-start justify-between gap-4">
+                    <div className="flex-1 min-w-0">
+                      <div className="flex items-center gap-2 flex-wrap">
+                        <span className="text-[13px] font-bold text-slate-800">{pub.name}</span>
+                        <span className="text-[9px] font-bold px-1.5 py-0.5 rounded"
+                          style={{ background: pub.is_active ? '#F0FDF4' : '#F1F5F9', color: pub.is_active ? '#15803D' : '#64748B', border: `1px solid ${pub.is_active ? '#BBF7D0' : '#E2E8F0'}` }}>
+                          {pub.is_active ? 'Active' : 'Inactive'}
+                        </span>
+                        <span className="text-[9px] font-bold px-1.5 py-0.5 rounded" style={{ background: BLUE_LT, color: BLUE, border: `1px solid ${BLUE_MD}` }}>pub: {pub.id}</span>
+                        <span className="text-[9px] font-bold px-1.5 py-0.5 rounded" style={{ background: '#FEFCE8', color: '#A16207', border: '1px solid #FEF08A' }}>
+                          {pub.payout ? `₹${pub.payout} / ${pub.currency}` : 'Payout: per offer'}
+                        </span>
+                      </div>
+
+                      <PublisherOfferLinks publisher={pub} offers={offers} baseUrl={baseUrl} />
+                      <CopyField label="Their postback" value={pub.postback_url_template} hint="We fire this (GET) when one of their clicks converts, with the macros filled in." />
+
+                      {testResult?.id === pub.id && (
+                        <p className="text-[10.5px] font-semibold mt-2 break-all" style={{ color: testResult.ok ? '#15803D' : '#B91C1C' }}>
+                          Test {testResult.ok ? 'OK' : 'failed'}: {testResult.message}{testResult.url ? ` — ${testResult.url}` : ''}
+                        </p>
+                      )}
+                    </div>
+                    <div className="flex items-center gap-2 shrink-0">
+                      {deleteConfirm === pub.id ? (
+                        <>
+                          <span className="text-[11px] text-slate-500">Delete?</span>
+                          <button onClick={() => setDeleteConfirm(null)} className="px-2.5 py-1 rounded-[6px] text-[11px] font-bold text-slate-500" style={{ background: '#F1F5F9', border: '1px solid #E2E8F0' }}>No</button>
+                          <button onClick={() => handleDelete(pub.id)} className="px-2.5 py-1 rounded-[6px] text-[11px] font-bold text-white" style={{ background: '#DC2626' }}>Yes</button>
+                        </>
+                      ) : (
+                        <>
+                          <button onClick={() => handleTest(pub.id)} disabled={testing === pub.id}
+                            title="Fire their postback once with click_id=TEST_CLICK_ID"
+                            className="px-3 py-1.5 rounded-[8px] text-[11px] font-bold transition-colors disabled:opacity-50"
+                            style={{ background: BLUE_LT, color: BLUE, border: `1px solid ${BLUE_MD}` }}>
+                            {testing === pub.id ? 'Testing…' : 'Test'}
+                          </button>
+                          <button onClick={() => { setEditPub(pub); setShowForm(false); setDeleteConfirm(null); }}
+                            className="px-3 py-1.5 rounded-[8px] text-[11px] font-bold text-slate-600 hover:bg-slate-100 transition-colors"
+                            style={{ background: '#F1F5F9', border: '1px solid #E2E8F0' }}>Edit</button>
+                          <button onClick={() => setDeleteConfirm(pub.id)}
+                            className="px-3 py-1.5 rounded-[8px] text-[11px] font-bold transition-colors"
+                            style={{ background: '#FEF2F2', color: '#B91C1C', border: '1px solid #FECACA' }}>Delete</button>
+                        </>
+                      )}
+                    </div>
+                  </div>
+                </div>
+              )}
+            </div>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
+/* ── Offer Form ──────────────────────────────────────────── */
+const EMPTY_OFFER = {
+  name: '', source: 'advertiser' as 'advertiser' | 'own', advertiser_id: '', landing_url_template: '',
+  payout: '', currency: 'INR', is_active: true, publisher_ids: [] as number[], regenerate_key: false,
+};
+type OfferFormData = typeof EMPTY_OFFER;
+
+function OfferForm({
+  initial = EMPTY_OFFER, isEdit = false, advertisers, publishers, onSave, onCancel, saving,
+}: {
+  initial?: OfferFormData;
+  isEdit?: boolean;
+  advertisers: Advertiser[];
+  publishers: Publisher[];
+  onSave: (data: OfferFormData) => void;
+  onCancel: () => void;
+  saving: boolean;
+}) {
+  const [form, setForm] = useState(initial);
+  const set = <K extends keyof OfferFormData>(k: K, v: OfferFormData[K]) => setForm((f) => ({ ...f, [k]: v }));
+  const landing = form.landing_url_template.trim();
+  const landingOk = /^https?:\/\//i.test(landing) && landing.includes('{click_id}');
+  const sourceOk = form.source === 'advertiser' ? !!form.advertiser_id : landingOk;
+  const canSave = form.name.trim().length > 0 && sourceOk;
+
+  function togglePublisher(id: number) {
+    set('publisher_ids', form.publisher_ids.includes(id) ? form.publisher_ids.filter((p) => p !== id) : [...form.publisher_ids, id]);
+  }
+
+  return (
+    <div className="rounded-[14px] p-5 mb-4" style={{ ...card, background: '#F8FAFC', border: `1.5px solid ${isEdit ? BLUE_MD : '#E2E8F0'}` }}>
+      <p className="text-[13px] font-bold text-slate-800 mb-4">{isEdit ? 'Edit offer' : 'Add offer'}</p>
+
+      <div className="mb-3">
+        <label className={labelCls}>Offer name <span style={{ color: BLUE }}>*</span></label>
+        <input value={form.name} onChange={(e) => set('name', e.target.value)}
+          placeholder="e.g. Loan IN – CPA" autoFocus={!isEdit} autoComplete="off"
+          className={inputCls} style={inputStyle} />
+      </div>
+
+      <div className="mb-3">
+        <label className={labelCls}>Traffic goes to</label>
+        <div className="flex items-center gap-2">
+          {([['advertiser', 'An advertiser'], ['own', 'Our own landing URL']] as const).map(([val, label]) => (
+            <button key={val} type="button" onClick={() => set('source', val)}
+              className="px-3 py-1.5 rounded-[8px] text-[11px] font-bold transition-all"
+              style={{
+                background: form.source === val ? BLUE_LT : '#FFFFFF',
+                border: `1.5px solid ${form.source === val ? BLUE : '#E2E8F0'}`,
+                color: form.source === val ? BLUE : '#64748B',
+              }}>
+              {label}
+            </button>
+          ))}
+        </div>
+      </div>
+
+      {form.source === 'advertiser' ? (
+        <div className="mb-3">
+          <label className={labelCls}>Advertiser <span style={{ color: BLUE }}>*</span></label>
+          <select value={form.advertiser_id} onChange={(e) => set('advertiser_id', e.target.value)}
+            className={inputCls} style={inputStyle}>
+            <option value="">Select advertiser…</option>
+            {advertisers.map((a) => <option key={a.id} value={a.id}>{a.name}{a.is_active ? '' : ' (inactive)'}</option>)}
+          </select>
+          <p className="text-[10.5px] text-slate-400 mt-1">Clicks go to the advertiser&apos;s landing page; the conversion comes back on the advertiser&apos;s postback as usual.</p>
+        </div>
+      ) : (
+        <div className="mb-3">
+          <label className={labelCls}>
+            Landing URL template <span style={{ color: BLUE }}>*</span>{' '}
+            <span className="text-slate-300 font-normal normal-case tracking-normal">(macros: {'{click_id} {ip}'})</span>
+          </label>
+          <input value={form.landing_url_template} onChange={(e) => set('landing_url_template', e.target.value)}
+            placeholder="https://our-site.com/offer?cid={click_id}"
+            autoComplete="off" className={inputCls + ' font-mono'} style={inputStyle} />
+          {landing.length > 0 && !landingOk && (
+            <p className="text-[11px] text-red-500 font-semibold mt-1.5">Must start with http(s):// and contain the literal <code className="font-mono">{'{click_id}'}</code> placeholder.</p>
+          )}
+          <p className="text-[10.5px] text-slate-400 mt-1">After saving, you get this offer&apos;s own postback URL — fire it from your landing page when a sale happens.</p>
+        </div>
+      )}
+
+      <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 mb-3">
+        <div>
+          <label className={labelCls}>Payout to publisher</label>
+          <input value={form.payout} onChange={(e) => set('payout', e.target.value.replace(/[^0-9.]/g, ''))}
+            placeholder="blank = publisher's payout / pass-through" autoComplete="off" className={inputCls} style={inputStyle} />
+        </div>
+        <div>
+          <label className={labelCls}>Currency</label>
+          <input value={form.currency} onChange={(e) => set('currency', e.target.value.toUpperCase())}
+            placeholder="INR" autoComplete="off" className={inputCls} style={inputStyle} />
+        </div>
+      </div>
+
+      <div className="mb-4">
+        <label className={labelCls}>Publishers allowed to run this offer</label>
+        {publishers.length === 0 ? (
+          <p className="text-[11px] text-slate-400">No publishers yet — add them on the Publishers page.</p>
+        ) : (
+          <div className="flex flex-wrap gap-2">
+            {publishers.map((p) => {
+              const on = form.publisher_ids.includes(p.id);
+              return (
+                <button key={p.id} type="button" onClick={() => togglePublisher(p.id)}
+                  className="px-2.5 py-1 rounded-[8px] text-[11px] font-semibold transition-all"
+                  style={{
+                    background: on ? BLUE : '#FFFFFF',
+                    border: `1.5px solid ${on ? BLUE : '#E2E8F0'}`,
+                    color: on ? '#FFFFFF' : '#64748B',
+                  }}>
+                  {on ? '✓ ' : ''}{p.name}{p.is_active ? '' : ' (inactive)'}
+                </button>
+              );
+            })}
+          </div>
+        )}
+      </div>
+
+      <div className="flex items-center gap-5 mb-4">
+        <label className="flex items-center gap-2 cursor-pointer select-none">
+          <input type="checkbox" checked={form.is_active} onChange={(e) => set('is_active', e.target.checked)} className="w-3.5 h-3.5" />
+          <span className="text-[12px] font-semibold text-slate-600">Active</span>
+        </label>
+        {isEdit && form.source === 'own' && (
+          <label className="flex items-center gap-2 cursor-pointer select-none">
+            <input type="checkbox" checked={form.regenerate_key} onChange={(e) => set('regenerate_key', e.target.checked)} className="w-3.5 h-3.5" />
+            <span className="text-[12px] font-semibold text-red-500">Regenerate postback key</span>
+          </label>
+        )}
+      </div>
+
+      <div className="flex items-center gap-2">
+        <button onClick={() => onSave(form)} disabled={saving || !canSave}
+          className="px-4 py-2 rounded-[8px] text-[12px] font-bold text-white transition-all disabled:opacity-40"
+          style={{ background: BLUE }}>
+          {saving ? 'Saving…' : isEdit ? 'Update' : 'Save'}
+        </button>
+        <button onClick={onCancel}
+          className="px-4 py-2 rounded-[8px] text-[12px] font-semibold text-slate-500 transition-colors hover:bg-slate-100"
+          style={{ background: '#F1F5F9', border: '1px solid #E2E8F0' }}>
+          Cancel
+        </button>
+      </div>
+    </div>
+  );
+}
+
+/* ── Offers Panel ───────────────────────────────────────── */
+export function OffersPanel() {
+  const [fromDate, setFromDate] = useState(todayStr);
+  const [toDate, setToDate]     = useState(todayStr);
+  const [allTime, setAllTime]   = useState(true);
+  const [byOffer, setByOffer]   = useState<OfferStat[]>([]);
+  const [loadingStats, setLoadingStats] = useState(true);
+
+  const [list, setList] = useState<Offer[]>([]);
+  const [advertisers, setAdvertisers] = useState<Advertiser[]>([]);
+  const [publishers, setPublishers]   = useState<Publisher[]>([]);
+  const [listLoading, setListLoading] = useState(true);
+  const [showForm, setShowForm]       = useState(false);
+  const [editOffer, setEditOffer]     = useState<Offer | null>(null);
+  const [saving, setSaving]           = useState(false);
+  const [deleteConfirm, setDeleteConfirm] = useState<number | null>(null);
+
+  const baseUrl = typeof window !== 'undefined' ? window.location.origin : (process.env.NEXT_PUBLIC_APP_URL ?? '');
+
+  const fetchStats = useCallback(async (from: string, to: string) => {
+    setLoadingStats(true);
+    const params = new URLSearchParams();
+    if (from) params.set('from', from);
+    if (to)   params.set('to', to);
+    const res = await fetch(`/api/admin/stats?${params}`);
+    if (res.status === 401) { adminLogout(); return; }
+    const json = await res.json();
+    if (json.success) setByOffer(json.by_offer);
+    setLoadingStats(false);
+  }, []);
+
+  const fetchList = useCallback(async () => {
+    setListLoading(true);
+    const res = await fetch('/api/admin/offers');
+    if (res.status === 401) { adminLogout(); return; }
+    const json = await res.json();
+    if (json.success) setList(json.data);
+    setListLoading(false);
+  }, []);
+
+  useEffect(() => {
+    fetchStats(allTime ? '' : fromDate, allTime ? '' : toDate);
+  }, [fromDate, toDate, allTime, fetchStats]);
+  useEffect(() => { fetchList(); }, [fetchList]);
+  useEffect(() => {
+    fetch('/api/admin/advertisers').then((r) => r.json()).then((json) => { if (json.success) setAdvertisers(json.data); }).catch(() => {});
+    fetch('/api/admin/publishers').then((r) => r.json()).then((json) => { if (json.success) setPublishers(json.data); }).catch(() => {});
+  }, []);
+
+  async function handleSave(form: OfferFormData) {
+    setSaving(true);
+    const url    = editOffer ? `/api/admin/offers/${editOffer.id}` : '/api/admin/offers';
+    const method = editOffer ? 'PUT' : 'POST';
+    const res    = await fetch(url, {
+      method, headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        name: form.name,
+        advertiser_id: form.source === 'advertiser' ? Number(form.advertiser_id) : null,
+        landing_url_template: form.source === 'own' ? form.landing_url_template : null,
+        payout: form.payout ? Number(form.payout) : null,
+        currency: form.currency,
+        is_active: form.is_active,
+        publisher_ids: form.publisher_ids,
+        regenerate_key: form.regenerate_key,
+      }),
+    });
+    const json = await res.json();
+    setSaving(false);
+    if (json.success) {
+      setShowForm(false); setEditOffer(null);
+      fetchList(); fetchStats(allTime ? '' : fromDate, allTime ? '' : toDate);
+    } else { alert(json.message ?? 'Error saving offer'); }
+  }
+
+  async function handleDelete(id: number) {
+    const res  = await fetch(`/api/admin/offers/${id}`, { method: 'DELETE' });
+    const json = await res.json();
+    if (json.success) {
+      setDeleteConfirm(null); fetchList(); fetchStats(allTime ? '' : fromDate, allTime ? '' : toDate);
+    } else { alert(json.message ?? 'Delete failed'); }
+  }
+
+  const pubName = (id: number) => publishers.find((p) => p.id === id)?.name ?? `#${id}`;
+
+  return (
+    <div>
+      <DateFilterBar
+        fromDate={fromDate} toDate={toDate} allTime={allTime}
+        onFromChange={setFromDate} onToChange={setToDate} onAllTimeToggle={() => setAllTime((p) => !p)}
+      />
+
+      {!loadingStats && byOffer.length > 0 && (
+        <div className="rounded-[14px] overflow-hidden mb-6" style={card}>
+          <div className="px-4 py-3" style={{ borderBottom: '1px solid #F1F5F9', background: '#F8FAFC' }}>
+            <p className="text-[11px] font-bold uppercase tracking-[.15em] text-slate-400">By Offer</p>
+          </div>
+          <div className="overflow-x-auto">
+            <table className="w-full text-left">
+              <thead>
+                <tr style={{ borderBottom: '1px solid #F1F5F9', background: '#FAFAFA' }}>
+                  {['Offer', 'Clicks', 'Conversions', 'CVR', 'Publisher payout'].map((h) => (
+                    <th key={h} className="px-4 py-2.5 text-[9px] font-bold uppercase tracking-[.16em] text-slate-400">{h}</th>
+                  ))}
+                </tr>
+              </thead>
+              <tbody>
+                {byOffer.map((row) => (
+                  <tr key={row.id} className="hover:bg-blue-50 transition-colors" style={{ borderBottom: '1px solid #F8FAFC' }}>
+                    <td className="px-4 py-3">
+                      <span className="text-[12px] font-bold text-slate-800 block">{row.name}</span>
+                      {!row.is_active && <span className="text-[9px] text-slate-400 block mt-0.5">Inactive</span>}
+                    </td>
+                    <td className="px-4 py-3 text-[13px] font-black text-slate-800">{row.clicks}</td>
+                    <td className="px-4 py-3 text-[12px] font-bold text-blue-600">{row.conversions}</td>
+                    <td className="px-4 py-3 text-[12px] text-slate-500">
+                      {Number(row.clicks) > 0 ? `${((Number(row.conversions) / Number(row.clicks)) * 100).toFixed(1)}%` : '—'}
+                    </td>
+                    <td className="px-4 py-3 text-[12px] font-bold text-amber-700">₹{Number(row.payout).toLocaleString('en-IN')}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </div>
+      )}
+
+      <div className="flex items-center justify-between mb-4">
+        <p className="text-[12px] text-slate-500">{list.length} offer{list.length !== 1 ? 's' : ''} configured</p>
+        {!showForm && !editOffer && (
+          <button onClick={() => setShowForm(true)}
+            className="flex items-center gap-1.5 px-3.5 py-2 rounded-[10px] text-[12px] font-bold text-white shrink-0 transition-all hover:opacity-90"
+            style={{ background: BLUE, boxShadow: `0 4px 14px -4px ${BLUE}88` }}>
+            <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2.5} strokeLinecap="round"><path d="M12 5v14M5 12h14" /></svg>
+            New offer
+          </button>
+        )}
+      </div>
+
+      {showForm && (
+        <OfferForm advertisers={advertisers} publishers={publishers}
+          onSave={handleSave} onCancel={() => setShowForm(false)} saving={saving} />
+      )}
+
+      {listLoading ? (
+        <div className="space-y-3">
+          {Array.from({ length: 2 }).map((_, i) => <div key={i} className="h-24 rounded-[12px] animate-pulse bg-slate-100" />)}
+        </div>
+      ) : list.length === 0 && !showForm ? (
+        <p className="text-[13px] text-slate-400 py-6">No offers yet. Create one and assign publishers to give them tracking links.</p>
+      ) : (
+        <div className="space-y-2">
+          {list.map((offer) => (
+            <div key={offer.id}>
+              {editOffer?.id === offer.id ? (
+                <OfferForm
+                  initial={{
+                    name: offer.name,
+                    source: offer.advertiser_id ? 'advertiser' : 'own',
+                    advertiser_id: offer.advertiser_id ? String(offer.advertiser_id) : '',
+                    landing_url_template: offer.landing_url_template ?? '',
+                    payout: offer.payout ?? '', currency: offer.currency, is_active: offer.is_active,
+                    publisher_ids: offer.publisher_ids, regenerate_key: false,
+                  }}
+                  isEdit advertisers={advertisers} publishers={publishers}
+                  onSave={handleSave} onCancel={() => setEditOffer(null)} saving={saving}
+                />
+              ) : (
+                <div className="px-4 py-3.5 rounded-[12px] hover:shadow-sm transition-all" style={card}>
+                  <div className="flex items-start justify-between gap-4">
+                    <div className="flex-1 min-w-0">
+                      <div className="flex items-center gap-2 flex-wrap">
+                        <span className="text-[13px] font-bold text-slate-800">{offer.name}</span>
+                        <span className="text-[9px] font-bold px-1.5 py-0.5 rounded"
+                          style={{ background: offer.is_active ? '#F0FDF4' : '#F1F5F9', color: offer.is_active ? '#15803D' : '#64748B', border: `1px solid ${offer.is_active ? '#BBF7D0' : '#E2E8F0'}` }}>
+                          {offer.is_active ? 'Active' : 'Inactive'}
+                        </span>
+                        <span className="text-[9px] font-bold px-1.5 py-0.5 rounded" style={{ background: BLUE_LT, color: BLUE, border: `1px solid ${BLUE_MD}` }}>offer: {offer.id}</span>
+                        <span className="text-[9px] font-mono px-1.5 py-0.5 rounded" style={{ background: '#F8FAFC', color: '#64748B', border: '1px solid #E2E8F0' }}>
+                          {offer.advertiser_id ? `→ ${offer.advertiser_name}` : '→ own landing'}
+                        </span>
+                        <span className="text-[9px] font-bold px-1.5 py-0.5 rounded" style={{ background: '#FEFCE8', color: '#A16207', border: '1px solid #FEF08A' }}>
+                          {offer.payout ? `₹${offer.payout} / ${offer.currency}` : 'Payout: per publisher'}
+                        </span>
+                      </div>
+
+                      {!offer.advertiser_id && (
+                        <CopyField label="Postback" value={`${baseUrl}/api/offer-postback/${offer.id}?key=${offer.postback_key}&click_id=YOUR_CLICK_ID_MACRO&payout=YOUR_AMOUNT_MACRO`}
+                          hint="Fire this from your landing page when a sale happens — click_id is the {click_id} we put in the landing URL." />
+                      )}
+
+                      {offer.publisher_ids.length === 0 ? (
+                        <p className="text-[10.5px] text-slate-400 mt-2">No publishers assigned — click Edit to allow publishers to run this offer.</p>
+                      ) : (
+                        offer.publisher_ids.map((pid) => (
+                          <CopyField key={pid} label={pubName(pid)} value={`${baseUrl}/o/${offer.id}?pub=${pid}&sub=THEIR_CLICK_ID_MACRO`} />
+                        ))
+                      )}
+                    </div>
+                    <div className="flex items-center gap-2 shrink-0">
+                      {deleteConfirm === offer.id ? (
+                        <>
+                          <span className="text-[11px] text-slate-500">Delete?</span>
+                          <button onClick={() => setDeleteConfirm(null)} className="px-2.5 py-1 rounded-[6px] text-[11px] font-bold text-slate-500" style={{ background: '#F1F5F9', border: '1px solid #E2E8F0' }}>No</button>
+                          <button onClick={() => handleDelete(offer.id)} className="px-2.5 py-1 rounded-[6px] text-[11px] font-bold text-white" style={{ background: '#DC2626' }}>Yes</button>
+                        </>
+                      ) : (
+                        <>
+                          <button onClick={() => { setEditOffer(offer); setShowForm(false); setDeleteConfirm(null); }}
+                            className="px-3 py-1.5 rounded-[8px] text-[11px] font-bold text-slate-600 hover:bg-slate-100 transition-colors"
+                            style={{ background: '#F1F5F9', border: '1px solid #E2E8F0' }}>Edit</button>
+                          <button onClick={() => setDeleteConfirm(offer.id)}
                             className="px-3 py-1.5 rounded-[8px] text-[11px] font-bold transition-colors"
                             style={{ background: '#FEF2F2', color: '#B91C1C', border: '1px solid #FECACA' }}>Delete</button>
                         </>
@@ -841,7 +1613,7 @@ export function ConversionsPanel() {
           <input
             value={search}
             onChange={(e) => { setSearch(e.target.value); setPage(1); }}
-            placeholder="Search advertiser…"
+            placeholder="Search advertiser / offer…"
             autoComplete="off"
             className="pl-7 pr-3 py-1.5 rounded-[8px] text-[11px] font-semibold outline-none focus:ring-2 focus:ring-blue-200"
             style={{
@@ -868,10 +1640,10 @@ export function ConversionsPanel() {
           <span className="text-[11px] text-slate-400">{total} total · Page {page}/{totalPages}</span>
         </div>
         <div className="overflow-x-auto">
-          <table className="w-full text-left min-w-[900px]">
+          <table className="w-full text-left min-w-[1040px]">
             <thead>
               <tr style={{ borderBottom: '1px solid #F1F5F9', background: '#FAFAFA' }}>
-                {['Advertiser', 'Media Buyer', 'Click ID', 'Event', 'Payout', 'Status', 'Meta CAPI', 'Date & Time'].map((h) => (
+                {['Advertiser / Offer', 'Media Buyer', 'Publisher', 'Click ID', 'Event', 'Payout', 'Status', 'Meta CAPI', 'Date & Time'].map((h) => (
                   <th key={h} className="px-5 py-3 text-[9px] font-bold uppercase tracking-[.16em] text-slate-400">{h}</th>
                 ))}
               </tr>
@@ -880,19 +1652,20 @@ export function ConversionsPanel() {
               {loading ? (
                 Array.from({ length: 6 }).map((_, i) => (
                   <tr key={i} style={{ borderBottom: '1px solid #F8FAFC' }}>
-                    {[110, 100, 140, 80, 60, 70, 70, 130].map((w, j) => (
+                    {[110, 100, 100, 140, 80, 60, 70, 70, 130].map((w, j) => (
                       <td key={j} className="px-5 py-3.5"><div className="h-4 rounded-lg animate-pulse bg-slate-100" style={{ width: w }} /></td>
                     ))}
                   </tr>
                 ))
               ) : rows.length === 0 ? (
-                <tr><td colSpan={8} className="px-5 py-10 text-center text-[13px] text-slate-400">No postbacks found</td></tr>
+                <tr><td colSpan={9} className="px-5 py-10 text-center text-[13px] text-slate-400">No postbacks found</td></tr>
               ) : (
                 rows.map((row) => (
                   <tr key={row.id} style={{ borderBottom: '1px solid #F8FAFC' }}>
                     <td className="px-5 py-3.5">
-                      <span className="text-[12px] font-bold text-slate-800 block">{row.advertiser_name}</span>
-                      <span className="text-[10px] text-slate-400 font-mono">{row.advertiser_slug}</span>
+                      <span className="text-[12px] font-bold text-slate-800 block">{row.advertiser_name ?? 'Own offer'}</span>
+                      {row.advertiser_slug && <span className="text-[10px] text-slate-400 font-mono block">{row.advertiser_slug}</span>}
+                      {row.offer_name && <span className="text-[10px] font-semibold block" style={{ color: BLUE }}>Offer: {row.offer_name}</span>}
                     </td>
                     <td className="px-5 py-3.5">
                       {row.media_buyer_name ? (
@@ -901,6 +1674,7 @@ export function ConversionsPanel() {
                         <span className="text-[12px] text-slate-300">—</span>
                       )}
                     </td>
+                    <td className="px-5 py-3.5"><PubPostbackCell row={row} /></td>
                     <td className="px-5 py-3.5"><span className="text-[11px] font-mono text-slate-500">{row.click_id || '—'}</span></td>
                     <td className="px-5 py-3.5"><span className="text-[11px] text-slate-600">{row.event}</span></td>
                     <td className="px-5 py-3.5"><span className="text-[12px] font-bold text-amber-700">{row.payout ? `₹${Number(row.payout).toLocaleString('en-IN')}` : '—'}</span></td>

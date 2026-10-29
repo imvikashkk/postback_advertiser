@@ -8,6 +8,8 @@ import { BLUE, BLUE_LT, BLUE_MD, adminLogout } from './panels';
 const NAV_ITEMS = [
   { href: '/admin/postbacks',   label: 'Postbacks',    icon: 'M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z' },
   { href: '/admin/advertisers', label: 'Advertisers',  icon: 'M11 3.055A9.001 9.001 0 1020.945 13H11V3.055z M20.488 9H15V3.512A9.025 9.025 0 0120.488 9z' },
+  { href: '/admin/offers',      label: 'Offers',       icon: 'M20 12V8H4v4m16 0v8H4v-8m16 0H4m8-4v12M12 8H8.5a2.5 2.5 0 110-5C11 3 12 8 12 8zm0 0h3.5a2.5 2.5 0 100-5C13 3 12 8 12 8z' },
+  { href: '/admin/publishers',  label: 'Publishers',   icon: 'M3 12h4l3-9 4 18 3-9h4' },
   { href: '/admin/mediabuyers', label: 'Media Buyers', icon: 'M17 21v-2a4 4 0 00-4-4H5a4 4 0 00-4 4v2M23 21v-2a4 4 0 00-3-3.87M16 3.13a4 4 0 010 7.75' },
 ];
 

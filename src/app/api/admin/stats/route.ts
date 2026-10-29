@@ -25,7 +25,7 @@ export async function GET(req: NextRequest) {
   const convMbCond = mbId ? `AND c.media_buyer_id = ${mbId}` : '';
 
   try {
-    const [overviewRes, byAdvertiserRes, byMediaBuyerRes] = await Promise.all([
+    const [overviewRes, byAdvertiserRes, byMediaBuyerRes, byPublisherRes, byOfferRes] = await Promise.all([
       pool.query(`
         SELECT
           (SELECT COUNT(*) FROM adv_clicks c WHERE 1=1 ${clickFilter})           AS total_clicks,
@@ -36,15 +36,25 @@ export async function GET(req: NextRequest) {
           (SELECT COUNT(*) FROM adv_conversions cv ${convJoin} WHERE cv.capi_sent = false AND cv.capi_error IS NULL ${convFilter} ${convMbCond}) AS capi_skipped
       `),
       pool.query(`
+        -- Clicks and conversions are aggregated separately: joining both onto the
+        -- advertiser at once multiplies every click by every conversion (slow, and
+        -- inflates SUM(payout) by the click count).
         SELECT
           p.id, p.name, p.slug, p.is_active,
-          COUNT(DISTINCT c.id)                        AS clicks,
-          COUNT(DISTINCT cv.id)                        AS conversions,
-          COALESCE(SUM(cv.payout), 0)                  AS payout
+          COALESCE(ck.clicks, 0)      AS clicks,
+          COALESCE(cn.conversions, 0) AS conversions,
+          COALESCE(cn.payout, 0)      AS payout
         FROM adv_advertisers p
-        LEFT JOIN adv_clicks c       ON c.advertiser_id = p.id ${clickFilter}
-        LEFT JOIN adv_conversions cv ON cv.advertiser_id = p.id ${convFilter}
-        GROUP BY p.id, p.name, p.slug, p.is_active
+        LEFT JOIN (
+          SELECT c.advertiser_id, COUNT(*) AS clicks
+          FROM adv_clicks c WHERE 1=1 ${clickFilter}
+          GROUP BY c.advertiser_id
+        ) ck ON ck.advertiser_id = p.id
+        LEFT JOIN (
+          SELECT cv.advertiser_id, COUNT(*) AS conversions, SUM(cv.payout) AS payout
+          FROM adv_conversions cv WHERE 1=1 ${convFilter}
+          GROUP BY cv.advertiser_id
+        ) cn ON cn.advertiser_id = p.id
         ORDER BY clicks DESC
       `),
       pool.query(`
@@ -59,6 +69,32 @@ export async function GET(req: NextRequest) {
         GROUP BY mb.id, mb.name, mb.is_active
         ORDER BY clicks DESC
       `),
+      pool.query(`
+        SELECT
+          pb.id, pb.name, pb.is_active,
+          COUNT(DISTINCT c.id)                                          AS clicks,
+          COUNT(DISTINCT cv.id)                                         AS conversions,
+          COUNT(DISTINCT cv.id) FILTER (WHERE cv.pub_postback_sent)     AS postbacks_sent,
+          COUNT(DISTINCT cv.id) FILTER (WHERE cv.pub_postback_error IS NOT NULL) AS postbacks_failed,
+          COALESCE(SUM(cv.pub_payout), 0)                               AS payout
+        FROM adv_publishers pb
+        LEFT JOIN adv_clicks c       ON c.publisher_id = pb.id ${clickFilter}
+        LEFT JOIN adv_conversions cv ON cv.click_id = c.click_id ${convFilter}
+        GROUP BY pb.id, pb.name, pb.is_active
+        ORDER BY clicks DESC
+      `),
+      pool.query(`
+        SELECT
+          o.id, o.name, o.is_active,
+          COUNT(DISTINCT c.id)                                          AS clicks,
+          COUNT(DISTINCT cv.id)                                         AS conversions,
+          COALESCE(SUM(cv.pub_payout), 0)                               AS payout
+        FROM adv_offers o
+        LEFT JOIN adv_clicks c       ON c.offer_id = o.id ${clickFilter}
+        LEFT JOIN adv_conversions cv ON cv.click_id = c.click_id ${convFilter}
+        GROUP BY o.id, o.name, o.is_active
+        ORDER BY clicks DESC
+      `),
     ]);
 
     return NextResponse.json({
@@ -66,6 +102,8 @@ export async function GET(req: NextRequest) {
       overview: overviewRes.rows[0],
       by_advertiser: byAdvertiserRes.rows,
       by_media_buyer: byMediaBuyerRes.rows,
+      by_publisher: byPublisherRes.rows,
+      by_offer: byOfferRes.rows,
     });
   } catch (err) {
     console.error('stats error:', err);
